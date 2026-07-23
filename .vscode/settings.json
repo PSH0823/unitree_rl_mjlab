@@ -1,0 +1,10 @@
+{
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/**",
+        "/usr/include/eigen3",
+        "/home/sanghyuk/unitree_rl_mjlab/simulate/build/_deps/osqp-cpp-src/include",
+        "/usr/include/opencv4"
+    ],
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
+}

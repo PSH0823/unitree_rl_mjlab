@@ -18,6 +18,9 @@
 #undef private
 
 #include <chrono>
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -34,6 +37,9 @@
 #include "array_safety.h"
 #include "unitree_sdk2_bridge.h"
 #include "param.h"
+#include "dpcbf/dynamic_obstacles.h"
+#include "dpcbf/dpcbf_safety_filter.h"
+#include "dpcbf/dpcbf_visualizer.h"
 
 #define MUJOCO_PLUGIN_DIR "mujoco_plugin"
 #define NUM_MOTOR_IDL_GO 20
@@ -100,10 +106,49 @@ namespace
   mjModel *m = nullptr;
   mjData *d = nullptr;
 
+  dpcbf::DynamicObstacleManager dynamic_obstacles;
+  dpcbf::DpcbfSafetyFilter safety_filter;
+  dpcbf::DpcbfVisualizer dpcbf_visualizer;
+
   // control noise variables
   mjtNum *ctrlnoise = nullptr;
 
   using Seconds = std::chrono::duration<double>;
+
+  double AxisToCommand(double axis, double minimum, double maximum)
+  {
+    const double normalized = std::clamp(axis, -1.0, 1.0);
+    return normalized >= 0.0 ? normalized * maximum : -normalized * minimum;
+  }
+
+  float CommandToAxis(double command, double minimum, double maximum)
+  {
+    if (command >= 0.0)
+    {
+      return static_cast<float>(maximum > 0.0 ? command / maximum : 0.0);
+    }
+    return static_cast<float>(minimum < 0.0 ? -command / minimum : 0.0);
+  }
+
+  dpcbf::RobotState ReadRobotGroundTruth(const mjModel* model, const mjData* data,
+                                         int body_id)
+  {
+    dpcbf::RobotState state;
+    if (!model || !data || body_id < 0)
+    {
+      return state;
+    }
+    const mjtNum* position = data->xpos + 3 * body_id;
+    const mjtNum* rotation = data->xmat + 9 * body_id;
+    state.x = position[0];
+    state.y = position[1];
+    state.phi = std::atan2(rotation[3], rotation[0]);
+    mjtNum body_velocity[6] = {};
+    mj_objectVelocity(model, data, mjOBJ_BODY, body_id, body_velocity, 1);
+    state.sagittal_velocity = body_velocity[3];
+    state.lateral_velocity = body_velocity[4];
+    return state;
+  }
 
   //---------------------------------------- plugin handling -----------------------------------------
 
@@ -293,7 +338,24 @@ namespace
     }
     else
     {
-      mnew = mj_loadXML(filename, nullptr, loadError, kErrorLength);
+      mjSpec* spec = mj_parseXML(filename, nullptr, loadError, kErrorLength);
+      if (spec)
+      {
+        try
+        {
+          dynamic_obstacles.AddToSpec(spec);
+          mnew = mj_compile(spec, nullptr);
+          if (!mnew)
+          {
+            mju::strcpy_arr(loadError, mjs_getError(spec));
+          }
+        }
+        catch (const std::exception& error)
+        {
+          mju::strcpy_arr(loadError, error.what());
+        }
+        mj_deleteSpec(spec);
+      }
       // remove trailing newline character from loadError
       if (loadError[0])
       {
@@ -355,6 +417,7 @@ namespace
 
           m = mnew;
           d = dnew;
+          dynamic_obstacles.BindModel(m, d);
           mj_forward(m, d);
 
           // allocate ctrlnoise
@@ -385,6 +448,7 @@ namespace
 
           m = mnew;
           d = dnew;
+          dynamic_obstacles.BindModel(m, d);
           mj_forward(m, d);
 
           // allocate ctrlnoise
@@ -462,6 +526,7 @@ namespace
               sim.speed_changed = false;
 
               // run single step, let next iteration deal with timing
+              dynamic_obstacles.Step(m, d, m->opt.timestep);
               mj_step(m, d);
               stepped = true;
             }
@@ -503,6 +568,7 @@ namespace
                 }
 
                 // call mj_step
+                dynamic_obstacles.Step(m, d, m->opt.timestep);
                 mj_step(m, d);
                 stepped = true;
 
@@ -548,6 +614,7 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
     if (d)
     {
       sim->Load(m, d, filename);
+      dynamic_obstacles.BindModel(m, d);
       mj_forward(m, d);
 
       // allocate ctrlnoise
@@ -592,12 +659,60 @@ void *UnitreeSdk2BridgeThread(void *arg)
     body_id = mj_name2id(m, mjOBJ_BODY, "base_link");
   }
   param::config.band_attached_link = 6 * body_id;
+
+  int dpcbf_body_id = mj_name2id(m, mjOBJ_BODY, safety_filter.base_body_name().c_str());
+  if (dpcbf_body_id < 0) {
+    std::cerr << "DPCBF base body was not found: "
+              << safety_filter.base_body_name() << std::endl;
+    return nullptr;
+  }
+  try {
+    safety_filter.Initialize(m->opt.timestep);
+    dpcbf_visualizer.Start();
+  } catch (const std::exception& error) {
+    std::cerr << "Failed to initialize DPCBF safety filter: " << error.what() << std::endl;
+    return nullptr;
+  }
+
+  JoystickAxisFilter axis_filter = [dpcbf_body_id](float lx, float ly, float rx) {
+    dpcbf::VelocityCommand desired;
+    desired.sagittal = AxisToCommand(ly, safety_filter.sagittal_velocity_min(),
+                                     safety_filter.sagittal_velocity_max());
+    desired.lateral = AxisToCommand(-lx, safety_filter.lateral_velocity_min(),
+                                    safety_filter.lateral_velocity_max());
+    desired.yaw_rate = AxisToCommand(-rx, safety_filter.yaw_rate_min(),
+                                     safety_filter.yaw_rate_max());
+
+    std::vector<dpcbf::ObstacleState> obstacle_states;
+    const auto obstacle_snapshot = dynamic_obstacles.Snapshot();
+    obstacle_states.reserve(obstacle_snapshot.size());
+    for (std::size_t obstacle_id = 0; obstacle_id < obstacle_snapshot.size();
+         ++obstacle_id) {
+      const auto& obstacle = obstacle_snapshot[obstacle_id];
+      obstacle_states.push_back({obstacle.position[0], obstacle.position[1], obstacle.radius,
+                                 obstacle.velocity[0], obstacle.velocity[1],
+                                 static_cast<int>(obstacle_id)});
+    }
+    const dpcbf::RobotState robot = ReadRobotGroundTruth(m, d, dpcbf_body_id);
+    const auto filtered = safety_filter.Filter(robot, desired, obstacle_states);
+    dpcbf_visualizer.Update(robot, obstacle_states, filtered);
+    return std::array<float, 3>{
+        -CommandToAxis(filtered.command.lateral,
+                       safety_filter.lateral_velocity_min(),
+                       safety_filter.lateral_velocity_max()),
+        CommandToAxis(filtered.command.sagittal,
+                      safety_filter.sagittal_velocity_min(),
+                      safety_filter.sagittal_velocity_max()),
+        -CommandToAxis(filtered.command.yaw_rate,
+                       safety_filter.yaw_rate_min(),
+                       safety_filter.yaw_rate_max())};
+  };
   
   std::unique_ptr<UnitreeSDK2BridgeBase> interface = nullptr;
   if (m->nu > NUM_MOTOR_IDL_GO) {
-    interface = std::make_unique<G1Bridge>(m, d);
+    interface = std::make_unique<G1Bridge>(m, d, axis_filter);
   } else {
-    interface = std::make_unique<Go2Bridge>(m, d);
+    interface = std::make_unique<Go2Bridge>(m, d, axis_filter);
   }
   interface->start();
   
@@ -633,6 +748,7 @@ void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
     }
     if(key==GLFW_KEY_BACKSPACE) {
       mj_resetData(m, d);
+      dynamic_obstacles.Reset(m, d);
       mj_forward(m, d);
     }
   }
@@ -673,6 +789,15 @@ int main(int argc, char **argv)
   // Load simulation configuration
   std::filesystem::path proj_dir = std::filesystem::path(getExecutableDir()).parent_path();
   param::config.load_from_yaml(proj_dir / "config.yaml");
+  try {
+    const auto dpcbf_config = proj_dir.parent_path() / "dpcbf/config/dpcbf_config.yaml";
+    dynamic_obstacles.LoadConfig(dpcbf_config);
+    safety_filter.LoadConfig(dpcbf_config);
+    dpcbf_visualizer.LoadConfig(dpcbf_config);
+  } catch (const std::exception& error) {
+    std::cerr << "Failed to load dynamic obstacle configuration: " << error.what() << '\n';
+    return EXIT_FAILURE;
+  }
   param::helper(argc, argv);
   if(param::config.robot_scene.is_relative()) {
     param::config.robot_scene = proj_dir.parent_path() / param::config.robot_scene;

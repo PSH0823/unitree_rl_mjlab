@@ -115,9 +115,22 @@ REGISTER_OBSERVATION(velocity_commands)
 
     const auto cfg = env->cfg["commands"]["base_velocity"]["ranges"];
 
-    obs[0] = std::clamp(joystick->ly(), cfg["lin_vel_x"][0].as<float>(), cfg["lin_vel_x"][1].as<float>());
-    obs[1] = std::clamp(-joystick->lx(), cfg["lin_vel_y"][0].as<float>(), cfg["lin_vel_y"][1].as<float>());
-    obs[2] = std::clamp(-joystick->rx(), cfg["ang_vel_z"][0].as<float>(), cfg["ang_vel_z"][1].as<float>());
+    const bool scale_from_joystick =
+        env->cfg["commands"]["base_velocity"]["scale_from_joystick"].as<bool>(false);
+    const auto axis_to_command = [scale_from_joystick](float axis,
+                                                       const YAML::Node& range) {
+        const float lower = range[0].as<float>();
+        const float upper = range[1].as<float>();
+        if (!scale_from_joystick) {
+            return std::clamp(axis, lower, upper);
+        }
+        const float normalized = std::clamp(axis, -1.0f, 1.0f);
+        return normalized >= 0.0f ? normalized * upper : -normalized * lower;
+    };
+
+    obs[0] = axis_to_command(joystick->ly(), cfg["lin_vel_x"]);
+    obs[1] = axis_to_command(-joystick->lx(), cfg["lin_vel_y"]);
+    obs[2] = axis_to_command(-joystick->rx(), cfg["ang_vel_z"]);
 
     return obs;
 }

@@ -19,7 +19,8 @@
 class UnitreeSDK2BridgeBase
 {
 public:
-    UnitreeSDK2BridgeBase(mjModel *model, mjData *data)
+    UnitreeSDK2BridgeBase(mjModel *model, mjData *data,
+                         JoystickAxisFilter axis_filter = {})
     : mj_model_(model), mj_data_(data)
     {
         _check_sensor();
@@ -28,9 +29,9 @@ public:
         }
         if(param::config.use_joystick == 1) {
             if(param::config.joystick_type == "xbox") {
-                joystick = std::make_shared<XBoxJoystick>(param::config.joystick_device, param::config.joystick_bits);
+                joystick = std::make_shared<XBoxJoystick>(param::config.joystick_device, param::config.joystick_bits, axis_filter);
             } else if(param::config.joystick_type == "switch") {
-                joystick  = std::make_shared<SwitchJoystick>(param::config.joystick_device, param::config.joystick_bits);
+                joystick  = std::make_shared<SwitchJoystick>(param::config.joystick_device, param::config.joystick_bits, axis_filter);
             } else {
                 std::cerr << "Unsupported joystick type: " << param::config.joystick_type << std::endl;
                 exit(EXIT_FAILURE);
@@ -155,7 +156,8 @@ using HighState_t = unitree::robot::go2::publisher::SportModeState;
 using WirelessController_t = unitree::robot::go2::publisher::WirelessController;
 
 public:
-    RobotBridge(mjModel *model, mjData *data) : UnitreeSDK2BridgeBase(model, data)
+    RobotBridge(mjModel *model, mjData *data, JoystickAxisFilter axis_filter = {})
+    : UnitreeSDK2BridgeBase(model, data, std::move(axis_filter))
     {
         lowcmd = std::make_shared<LowCmd_t>("rt/lowcmd");
         lowstate = std::make_unique<LowState_t>();
@@ -259,7 +261,8 @@ using Go2Bridge = RobotBridge<unitree::robot::go2::subscription::LowCmd, unitree
 class G1Bridge : public RobotBridge<unitree::robot::g1::subscription::LowCmd, unitree::robot::g1::publisher::LowState>
 {
 public:
-    G1Bridge(mjModel *model, mjData *data) : RobotBridge(model, data)
+    G1Bridge(mjModel *model, mjData *data, JoystickAxisFilter axis_filter = {})
+    : RobotBridge(model, data, std::move(axis_filter))
     {
         if (param::config.robot.find("g1") != std::string::npos) {
             auto* g1_lowstate = dynamic_cast<unitree::robot::g1::publisher::LowState*>(lowstate.get());

@@ -68,7 +68,7 @@ FSM:
       Passive: LT + B.on_pressed
       Mimic_Dance1_subject2: RB + A.on_pressed
 
-    policy_dir: config/policy/velocity
+    policy_dir: config/policy/velocity/trained_2026_07_15_16_17_18
 
 
   Mimic_Dance1_subject2:

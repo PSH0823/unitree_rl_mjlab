@@ -1,0 +1,73 @@
+dynamic_obstacles:
+  enabled: true
+  count: 20
+
+  # A radius and a constant speed are sampled once per obstacle at startup.
+  radius_range: [0.1, 0.5]         # meters
+  speed_range: [0.0, 0.6]          # meters/second
+  collision_enabled: true          # physical contact between robot and cylinders
+  rgba: [0.1, 0.4, 1.0, 0.45]     # translucent blue
+  height: 1.5                      # meters
+  random_seed: 42                  # same value reproduces the same obstacle set
+
+  arena:
+    size: [10.0, 10.0]             # width (x), depth (y), meters
+    # G1 starts at (0, 0). With this center, the arena spans x=[1, 11]
+    # and y=[-5, 5], so the robot starts 1 m outside the left boundary.
+    center: [6.0, 0.0]
+    show_boundary: true
+    boundary_thickness: 0.04       # meters; visual only
+    boundary_rgba: [0.2, 0.7, 1.0, 0.12]
+
+robot:
+  base_body: pelvis                # floating-base body used for MuJoCo ground truth
+  k_mu: 1
+  k_lambda: 0.3
+  r_rob: 0.25                      # meters
+  p_max: 3.0                       # obstacle detection radius, meters
+
+  # These match the velocity-command ranges used to train the selected policy.
+  v_s_max: 2.0
+  v_s_min: -1.0
+  v_l_max: 1.0
+  v_l_min: -1.0
+  w_max: 1.0
+  w_min: -1.0
+
+  a_s_max: 4.0
+  a_s_min: -2.0
+  a_l_max: 2.0
+  a_l_min: -2.0
+  s: 1.05                          # safety factor; must be greater than 1
+  eps_v: 0.05
+  eps_d: 0.05
+
+qp_parameters:
+  enabled: true
+
+  k_a_s: 1.0
+  k_a_l: 1.0
+  alpha: 1.0
+  default_num_constraints: 10
+
+  # exponential CBF (eCBF) parameters for distance between robot and obstacles
+  ecbf_enabled: true
+  alpha_ecbf: 100.0
+  # Optimal-Decay CBF (ODCBF) parameters
+  odcbf_enabled: true
+  decay_weight: 1000000
+  # Slack parameters
+  slack_enabled: false
+  slack_weight: 1000000
+
+visualization:
+  enabled: true
+  window_name: "DPCBF Top-Down and Velocity Boundaries"
+  window_width: 1500
+  window_height: 900
+  refresh_hz: 30.0
+  velocity_axis_limit: 3.0            # +/- m/s in each LoS velocity card
+  velocity_arrow_seconds: 1.0         # world-arrow length = relative velocity * this value
+  world_parabola_lateral_limit: 1.0   # +/- LoS lateral velocity shown on the world pane
+  world_parabola_backward_limit: 1.5  # maximum -LoS velocity extent on the world pane
+  world_margin: 1.0                   # meters around arena and p_max circle
