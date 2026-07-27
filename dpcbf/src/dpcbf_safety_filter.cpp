@@ -77,6 +77,8 @@ struct DpcbfSafetyFilter::Impl {
   double alpha_2 = 1.0;
   double decay_weight = 1.0e6;
   double slack_weight = 1.0e6;
+  double reference_control_frequency_hz = 500.0;
+  double velocity_increment_scale = 1.0;
   int max_constraints = 10;
   double dt = 0.0;
   bool initialized = false;
@@ -202,13 +204,17 @@ struct DpcbfSafetyFilter::Impl {
     lower[ControlBoundRowOffset() + 2] = yaw_rate_min;
     upper[ControlBoundRowOffset() + 2] = yaw_rate_max;
     lower[ControlBoundRowOffset() + 3] =
-        (sagittal_velocity_min - robot.sagittal_velocity) / dt / 500;
+        (sagittal_velocity_min - robot.sagittal_velocity) /
+        velocity_increment_scale;
     upper[ControlBoundRowOffset() + 3] =
-        (sagittal_velocity_max - robot.sagittal_velocity) / dt / 500;
+        (sagittal_velocity_max - robot.sagittal_velocity) /
+        velocity_increment_scale;
     lower[ControlBoundRowOffset() + 4] =
-        (lateral_velocity_min - robot.lateral_velocity) / dt / 500;
+        (lateral_velocity_min - robot.lateral_velocity) /
+        velocity_increment_scale;
     upper[ControlBoundRowOffset() + 4] =
-        (lateral_velocity_max - robot.lateral_velocity) / dt / 500;
+        (lateral_velocity_max - robot.lateral_velocity) /
+        velocity_increment_scale;
     for (int i = 0; i < DecayVariableCount(); ++i) {
       lower[DecayBoundRowOffset() + i] = 1.0;
     }
@@ -267,6 +273,8 @@ void DpcbfSafetyFilter::LoadConfig(const std::filesystem::path& path) {
   }
   impl_->decay_weight = qp["decay_weight"].as<double>(1.0e6);
   impl_->slack_weight = qp["slack_weight"].as<double>(1.0e6);
+  impl_->reference_control_frequency_hz =
+      qp["reference_control_frequency_hz"].as<double>(500.0);
   impl_->max_constraints = qp["default_num_constraints"].as<int>();
 
   const auto ordered = [](double lower, double upper) { return lower <= upper; };
@@ -276,6 +284,7 @@ void DpcbfSafetyFilter::LoadConfig(const std::filesystem::path& path) {
       impl_->k_a_l < 0.0 || impl_->alpha <= 0.0 || impl_->max_constraints <= 0 ||
       impl_->alpha_1 <= 0.0 || impl_->alpha_2 <= 0.0 ||
       impl_->decay_weight <= 0.0 || impl_->slack_weight <= 0.0 ||
+      impl_->reference_control_frequency_hz <= 0.0 ||
       !ordered(impl_->sagittal_velocity_min, impl_->sagittal_velocity_max) ||
       !ordered(impl_->lateral_velocity_min, impl_->lateral_velocity_max) ||
       !ordered(impl_->yaw_rate_min, impl_->yaw_rate_max) ||
@@ -292,6 +301,8 @@ void DpcbfSafetyFilter::Initialize(double control_dt) {
     throw std::runtime_error("DPCBF control dt must be positive and finite");
   }
   impl_->dt = control_dt;
+  impl_->velocity_increment_scale =
+      control_dt * impl_->reference_control_frequency_hz;
   if (!impl_->enabled ||
       (!impl_->dpcbf_enabled && !impl_->ecbf_enabled)) {
     impl_->initialized = true;
@@ -339,7 +350,9 @@ void DpcbfSafetyFilter::Initialize(double control_dt) {
   }
   impl_->initialized = true;
   std::cout << "Initialized OSQP safety filter at dt=" << impl_->dt
-            << " s, variables=" << impl_->NumVariables()
+            << " s, velocity increment scale="
+            << impl_->velocity_increment_scale
+            << ", variables=" << impl_->NumVariables()
             << ", rows=" << impl_->NumRows()
             << ", DPCBF=" << impl_->dpcbf_enabled
             << ", eCBF=" << impl_->ecbf_enabled
@@ -348,7 +361,7 @@ void DpcbfSafetyFilter::Initialize(double control_dt) {
 }
 
 DpcbfConstraint DpcbfSafetyFilter::EvaluateConstraint(
-    const RobotState& robot, const ObstacleState& obstacle) const {
+const RobotState& robot, const ObstacleState& obstacle) const {
   const double px = obstacle.x - robot.x;
   const double py = obstacle.y - robot.y;
   const double p_squared = std::max(px * px + py * py, kMinimumDenominator);
@@ -517,31 +530,21 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
     const double los_angle = std::atan2(py, px);
     const double cosine = std::cos(los_angle);
     const double sine = std::sin(los_angle);
-    const double relative_x =
-        obstacle.velocity_x - robot_velocity_x;
-    const double relative_y =
-        obstacle.velocity_y - robot_velocity_y;
-    const double x_tilde =
-        cosine * relative_x + sine * relative_y;
-    const double y_tilde =
-        -sine * relative_x + cosine * relative_y;
+    const double relative_x = obstacle.velocity_x - robot_velocity_x;
+    const double relative_y = obstacle.velocity_y - robot_velocity_y;
+    const double x_tilde = cosine * relative_x + sine * relative_y;
+    const double y_tilde = -sine * relative_x + cosine * relative_y;
+
     const double safe_velocity =
         std::sqrt(relative_x * relative_x +
                   relative_y * relative_y +
                   impl_->eps_v * impl_->eps_v);
-    const double safe_radius =
-        (impl_->robot_radius + obstacle.radius) *
-        impl_->safety_factor;
-    const double smooth_clearance = std::sqrt(std::max(
-        px * px + py * py - safe_radius * safe_radius +
-            impl_->eps_d * impl_->eps_d,
+    const double safe_radius = (impl_->robot_radius + obstacle.radius) * impl_->safety_factor;
+    const double smooth_clearance = std::sqrt(
+        std::max(px * px + py * py - safe_radius * safe_radius + impl_->eps_d * impl_->eps_d,
         kMinimumDenominator));
-    const double safe_distance =
-        smooth_clearance - impl_->eps_d;
-    const double adaptive_scale =
-        std::sqrt(impl_->safety_factor * impl_->safety_factor -
-                  1.0) /
-        safe_radius;
+    const double safe_distance = smooth_clearance - impl_->eps_d;
+    const double adaptive_scale = std::sqrt(impl_->safety_factor * impl_->safety_factor -1.0) / safe_radius;
 
     DpcbfVisualizationObstacle visual;
     visual.obstacle = obstacle;
@@ -549,11 +552,8 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
     visual.distance = nearest[i].first;
     visual.relative_velocity_world = {relative_x, relative_y};
     visual.relative_velocity_los = {x_tilde, y_tilde};
-    visual.boundary_vertex_x =
-        -adaptive_scale * impl_->k_mu * safe_distance;
-    visual.boundary_curvature =
-        adaptive_scale * impl_->k_lambda * safe_distance /
-        safe_velocity;
+    visual.boundary_vertex_x = -adaptive_scale * impl_->k_mu * safe_distance;
+    visual.boundary_curvature = adaptive_scale * impl_->k_lambda * safe_distance / safe_velocity;
     result.selected_obstacles.push_back(visual);
   }
 
@@ -660,16 +660,21 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
       if ((impl_->failure_count++ % 500) == 0) {
         std::cerr << "DPCBF OSQP solve failed (" << osqp::ToString(exit_code)
                   << "); holding last feasible command\n";
+        // std::cout << "last sagittal acceleration: " << impl_->last_acceleration[0] << '\n'
+        //           << "last lateral acceleration: " << impl_->last_acceleration[1] << '\n'
+        //           << "last yaw rate: " << impl_->last_acceleration[2] << '\n';
       }
     }
   }
 
   result.acceleration = impl_->last_acceleration;
   result.command.sagittal = Clamp(
-      robot.sagittal_velocity + result.acceleration[0] * impl_->dt * 500,
+      robot.sagittal_velocity +
+          result.acceleration[0] * impl_->velocity_increment_scale,
       impl_->sagittal_velocity_min, impl_->sagittal_velocity_max);
   result.command.lateral = Clamp(
-      robot.lateral_velocity + result.acceleration[1] * impl_->dt * 500,
+      robot.lateral_velocity +
+          result.acceleration[1] * impl_->velocity_increment_scale,
       impl_->lateral_velocity_min, impl_->lateral_velocity_max);
   result.command.yaw_rate = Clamp(result.acceleration[2],
                                   impl_->yaw_rate_min, impl_->yaw_rate_max);

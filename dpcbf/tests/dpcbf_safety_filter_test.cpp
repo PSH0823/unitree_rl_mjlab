@@ -66,8 +66,17 @@ int main(int argc, char** argv) {
 
   try {
     const YAML::Node config = YAML::LoadFile(argv[1]);
+    const YAML::Node qp_config = config["qp_parameters"];
     const int configured_max_constraints =
-        config["qp_parameters"]["default_num_constraints"].as<int>();
+        qp_config["default_num_constraints"].as<int>();
+    const bool configured_dpcbf =
+        qp_config["dpcbf_enabled"].as<bool>(true);
+    const bool configured_ecbf =
+        qp_config["ecbf_enabled"].as<bool>(false);
+    const bool configured_odcbf =
+        qp_config["odcbf_enabled"].as<bool>(false);
+    const bool configured_slack =
+        qp_config["slack_enabled"].as<bool>(false);
     dpcbf::DpcbfSafetyFilter filter;
     filter.LoadConfig(std::filesystem::path(argv[1]));
     constexpr double dt = 0.002;
@@ -156,6 +165,24 @@ int main(int argc, char** argv) {
     ExpectNear(unconstrained.command.yaw_rate, 1.0, 2.0e-4,
                "yaw command");
 
+    dpcbf::DpcbfSafetyFilter slower_filter;
+    slower_filter.LoadConfig(std::filesystem::path(argv[1]));
+    constexpr double slower_dt = 0.01;
+    slower_filter.Initialize(slower_dt);
+    const auto scaled_increment =
+        slower_filter.Filter(stopped, desired, {});
+    if (!scaled_increment.solved) {
+      throw std::runtime_error("scaled velocity-increment solve failed");
+    }
+    ExpectNear(
+        scaled_increment.command.sagittal,
+        scaled_increment.acceleration[0] * slower_dt * 500.0, 2.0e-5,
+        "scaled sagittal command integration");
+    ExpectNear(
+        scaled_increment.command.lateral,
+        scaled_increment.acceleration[1] * slower_dt * 500.0, 2.0e-5,
+        "scaled lateral command integration");
+
     std::vector<dpcbf::ObstacleState> many_obstacles;
     for (int i = 0; i < 15; ++i) {
       many_obstacles.push_back(
@@ -164,16 +191,27 @@ int main(int argc, char** argv) {
     const auto constrained = filter.Filter(stopped, desired, many_obstacles);
     if (!constrained.solved ||
         constrained.active_constraints != configured_max_constraints ||
-        constrained.active_dpcbf_constraints != configured_max_constraints ||
-        constrained.active_ecbf_constraints != configured_max_constraints ||
+        constrained.active_dpcbf_constraints !=
+            (configured_dpcbf ? configured_max_constraints : 0) ||
+        constrained.active_ecbf_constraints !=
+            (configured_ecbf ? configured_max_constraints : 0) ||
         constrained.selected_obstacles.size() !=
             static_cast<std::size_t>(configured_max_constraints)) {
       throw std::runtime_error("nearest-obstacle constraint cap was not applied");
     }
-    if (constrained.decay_variables.size() !=
-            static_cast<std::size_t>(configured_max_constraints) ||
-        constrained.slack_variables.size() !=
-            static_cast<std::size_t>(2 * configured_max_constraints)) {
+    const std::size_t expected_decay_count =
+        configured_dpcbf && configured_odcbf
+            ? static_cast<std::size_t>(configured_max_constraints)
+            : 0U;
+    const std::size_t expected_slack_count =
+        configured_slack
+            ? static_cast<std::size_t>(
+                  configured_max_constraints *
+                  (static_cast<int>(configured_dpcbf) +
+                   static_cast<int>(configured_ecbf)))
+            : 0U;
+    if (constrained.decay_variables.size() != expected_decay_count ||
+        constrained.slack_variables.size() != expected_slack_count) {
       throw std::runtime_error("ODCBF or slack variable count mismatch");
     }
     for (double decay : constrained.decay_variables) {

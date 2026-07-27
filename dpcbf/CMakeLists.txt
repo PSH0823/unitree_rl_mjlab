@@ -41,6 +41,12 @@ target_include_directories(dpcbf_safety_filter
 target_compile_features(dpcbf_safety_filter PUBLIC cxx_std_17)
 target_link_libraries(dpcbf_safety_filter PUBLIC osqp-cpp yaml-cpp)
 
+add_executable(dpcbf_rollout_evaluator
+  parameter_optimization/dpcbf_rollout_evaluator.cpp
+)
+target_compile_features(dpcbf_rollout_evaluator PRIVATE cxx_std_17)
+target_link_libraries(dpcbf_rollout_evaluator PRIVATE dpcbf_safety_filter yaml-cpp)
+
 find_package(OpenCV QUIET COMPONENTS core imgproc highgui)
 if(OpenCV_FOUND)
   add_library(dpcbf_visualizer STATIC src/dpcbf_visualizer.cpp)

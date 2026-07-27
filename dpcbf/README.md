@@ -17,10 +17,15 @@ gamepad velocity request
   -> joint position targets
 ```
 
-The simulator uses MuJoCo's `m->opt.timestep` as the integration `dt`. Robot
-position and yaw come from the configured floating-base body. Body-frame linear
-velocity comes from `mj_objectVelocity(..., flg_local=1)`. Dynamic-obstacle
-positions and velocities are copied directly from the mocap obstacle manager.
+Robot position and yaw come from the configured floating-base body. Body-frame
+linear velocity comes from `mj_objectVelocity(..., flg_local=1)`.
+Dynamic-obstacle positions and velocities are copied directly from the mocap
+obstacle manager. The first two QP inputs are normalized velocity increments
+at `qp_parameters.reference_control_frequency_hz` (500 Hz by default). The
+applied update is
+`v_next = v + delta_v_normalized * reference_frequency * control_dt`.
+Consequently the scale is 1 at 0.002 s and 5 at 0.01 s. Position, yaw, and
+obstacle motion still use the real simulation timestep.
 
 ## QP safety options
 
@@ -34,8 +39,7 @@ feature switches change the QP structure at startup:
   `V = v_obstacle - v_robot`, and
   `D = p^T p - (r_robot + r_obstacle)^2`, the implemented row is
   `A_ecbf u + b_ecbf >= 0`, where
-  `b_ecbf = 2 V^T V + (alpha_1 + alpha_2) D_dot
-  + alpha_1 alpha_2 D`. A single `alpha_ecbf` sets both alpha values; separate
+  `b_ecbf = 2 V^T V + (alpha_1 + alpha_2) D_do + alpha_1 alpha_2 D`. A single `alpha_ecbf` sets both alpha values; separate
   `alpha_1` and `alpha_2` keys remain supported.
 - `odcbf_enabled` changes each selected DPCBF row to
   `L_f h + L_g h u + w_i alpha h >= 0`, adds one independent `w_i >= 1` per
@@ -86,6 +90,55 @@ the world view.
 
 The first CMake configure downloads pinned revisions of `google/osqp-cpp`, OSQP,
 and Abseil. Incremental builds do not contact the network.
+
+## DPCBF parameter optimization
+
+`parameter_optimization/tune_dpcbf.py` tunes the base `k_mu`, base `k_lambda`,
+and DPCBF `alpha`. One Optuna trial evaluates one parameter set over a fixed,
+reproducible set of 2D rollouts. The headless evaluator links the same
+`DpcbfSafetyFilter` and OSQP C++ implementation used by MuJoCo.
+
+The editable `CONFIG` dictionary at the top of the Python file contains:
+
+- Optuna trial/rollout counts and all three search ranges.
+- Episode timing and the fixed-command/waypoint/Perlin command mixture.
+- Obstacle count, radius/speed ranges, and arena size.
+- Robot bounds, `p_max`, safety regularizers, and `spawn_clearance`.
+- DPCBF, eCBF, ODCBF, and slack switches and weights.
+- The outer failure, survival, tracking, intervention, slack, and decay score
+  weights.
+
+`spawn_clearance` is a surface-to-surface initial clearance. An obstacle is
+accepted only when
+`center_distance >= r_rob + r_obs + spawn_clearance`.
+Every Optuna trial uses the same rollout indices and scenario seed, so candidate
+parameters see identical command and obstacle distributions.
+
+Build and run:
+
+```bash
+cmake -S simulate -B simulate/build
+cmake --build simulate/build --target dpcbf_rollout_evaluator -j2
+python3 -m pip install -r dpcbf/parameter_optimization/requirements.txt
+python3 dpcbf/parameter_optimization/tune_dpcbf.py
+```
+
+A dependency-free smoke evaluation of the midpoint parameters is also
+available (PyYAML is still required):
+
+```bash
+python3 dpcbf/parameter_optimization/tune_dpcbf.py \
+  --evaluate-once --rollouts 2
+```
+
+By default, only the resumable SQLite study and `best_dpcbf_config.yaml` remain
+under `parameter_optimization/results`. Trial YAML/JSON and smoke-evaluation
+files use temporary directories. Set `keep_trial_artifacts: true` or
+`write_study_summary: true` in the Python `CONFIG` only when those diagnostics
+are needed. A collision, arena exit, or hard QP failure terminates only that
+rollout and receives both a failure penalty and a lost survival penalty in the
+outer objective. Top candidates should still be validated with unseen scenario
+seeds and then in the full MuJoCo G1 simulation.
 
 ## Test
 

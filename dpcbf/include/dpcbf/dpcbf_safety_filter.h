@@ -58,6 +58,9 @@ struct DpcbfVisualizationObstacle {
 
 struct SafetyFilterResult {
   VelocityCommand command;
+  // [normalized_delta_v_s, normalized_delta_v_l, yaw_rate]. The first two
+  // entries use the configured reference control frequency. The applied
+  // per-tick delta-v is value * reference_frequency_hz * control_dt.
   std::array<double, 3> acceleration{};
   int active_constraints = 0;
   int active_dpcbf_constraints = 0;

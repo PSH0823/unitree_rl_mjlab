@@ -4,9 +4,9 @@ dynamic_obstacles:
 
   # A radius and a constant speed are sampled once per obstacle at startup.
   radius_range: [0.1, 0.5]         # meters
-  speed_range: [0.0, 0.6]          # meters/second
+  speed_range: [0.0, 0.8]          # meters/second
   collision_enabled: true          # physical contact between robot and cylinders
-  rgba: [0.1, 0.4, 1.0, 0.45]     # translucent blue
+  rgba: [0.1, 0.4, 1.0, 0.45]      # translucent blue
   height: 1.5                      # meters
   random_seed: 42                  # same value reproduces the same obstacle set
 
@@ -22,7 +22,7 @@ dynamic_obstacles:
 robot:
   base_body: pelvis                # floating-base body used for MuJoCo ground truth
   k_mu: 1
-  k_lambda: 0.3
+  k_lambda: 0.5
   r_rob: 0.25                      # meters
   p_max: 3.0                       # obstacle detection radius, meters
 
@@ -47,17 +47,20 @@ qp_parameters:
 
   k_a_s: 1.0
   k_a_l: 1.0
-  alpha: 1.0
+  # a_s/a_l are normalized at 500 Hz. Applied delta-v is multiplied by
+  # reference_control_frequency_hz * actual control_dt.
+  reference_control_frequency_hz: 500.0
+  alpha: 2.0
   default_num_constraints: 10
 
   # exponential CBF (eCBF) parameters for distance between robot and obstacles
   ecbf_enabled: true
   alpha_ecbf: 100.0
   # Optimal-Decay CBF (ODCBF) parameters
-  odcbf_enabled: true
+  odcbf_enabled: false
   decay_weight: 1000000
   # Slack parameters
-  slack_enabled: false
+  slack_enabled: true
   slack_weight: 1000000
 
 visualization:
