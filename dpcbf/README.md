@@ -47,6 +47,11 @@ feature switches change the QP structure at startup:
 - `slack_enabled` adds an independent `delta_i >= 0` to every active DPCBF and
   eCBF row and adds `slack_weight delta_i^2` to the objective. Acceleration,
   yaw-rate, and velocity bounds remain hard constraints.
+- `obstacle_priority: 0` keeps the nearest obstacles inside `p_max`.
+  `obstacle_priority: 1` instead sorts them by descending closing alignment
+  `-dot(v_obstacle - v_robot, p_obstacle - p_robot) /
+  (norm(v_relative) norm(p_relative))`, with distance as the tie-break. Thus an
+  approaching obstacle scores near `+1` and a receding obstacle near `-1`.
 
 With `default_num_constraints: 10` and all three optional features enabled, the
 QP has 33 variables and 55 rows. Feature branches themselves are negligible;

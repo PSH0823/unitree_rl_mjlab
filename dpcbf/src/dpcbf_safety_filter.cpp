@@ -79,6 +79,7 @@ struct DpcbfSafetyFilter::Impl {
   double slack_weight = 1.0e6;
   double reference_control_frequency_hz = 500.0;
   double velocity_increment_scale = 1.0;
+  int obstacle_priority = 0;
   int max_constraints = 10;
   double dt = 0.0;
   bool initialized = false;
@@ -275,6 +276,7 @@ void DpcbfSafetyFilter::LoadConfig(const std::filesystem::path& path) {
   impl_->slack_weight = qp["slack_weight"].as<double>(1.0e6);
   impl_->reference_control_frequency_hz =
       qp["reference_control_frequency_hz"].as<double>(500.0);
+  impl_->obstacle_priority = qp["obstacle_priority"].as<int>(0);
   impl_->max_constraints = qp["default_num_constraints"].as<int>();
 
   const auto ordered = [](double lower, double upper) { return lower <= upper; };
@@ -285,6 +287,7 @@ void DpcbfSafetyFilter::LoadConfig(const std::filesystem::path& path) {
       impl_->alpha_1 <= 0.0 || impl_->alpha_2 <= 0.0 ||
       impl_->decay_weight <= 0.0 || impl_->slack_weight <= 0.0 ||
       impl_->reference_control_frequency_hz <= 0.0 ||
+      (impl_->obstacle_priority != 0 && impl_->obstacle_priority != 1) ||
       !ordered(impl_->sagittal_velocity_min, impl_->sagittal_velocity_max) ||
       !ordered(impl_->lateral_velocity_min, impl_->lateral_velocity_max) ||
       !ordered(impl_->yaw_rate_min, impl_->yaw_rate_max) ||
@@ -484,18 +487,56 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
   }
 
   SafetyFilterResult result;
-  std::vector<std::pair<double, const ObstacleState*>> nearest;
+  const double robot_velocity_x =
+      robot.sagittal_velocity * std::cos(robot.phi) -
+      robot.lateral_velocity * std::sin(robot.phi);
+  const double robot_velocity_y =
+      robot.sagittal_velocity * std::sin(robot.phi) +
+      robot.lateral_velocity * std::cos(robot.phi);
+  struct ObstacleCandidate {
+    double distance = 0.0;
+    double closing_alignment = 0.0;
+    const ObstacleState* obstacle = nullptr;
+  };
+  std::vector<ObstacleCandidate> nearest;
   nearest.reserve(obstacles.size());
   for (const ObstacleState& obstacle : obstacles) {
     const double dx = obstacle.x - robot.x;
     const double dy = obstacle.y - robot.y;
     const double distance = std::hypot(dx, dy);
     if (distance <= impl_->detection_radius) {
-      nearest.emplace_back(distance, &obstacle);
+      const double relative_velocity_x =
+          obstacle.velocity_x - robot_velocity_x;
+      const double relative_velocity_y =
+          obstacle.velocity_y - robot_velocity_y;
+      const double relative_speed =
+          std::hypot(relative_velocity_x, relative_velocity_y);
+      double closing_alignment = 0.0;
+      if (relative_speed > kMinimumDenominator &&
+          distance > kMinimumDenominator) {
+        closing_alignment =
+            -(relative_velocity_x * dx +
+              relative_velocity_y * dy) /
+            (relative_speed * distance);
+        closing_alignment =
+            Clamp(closing_alignment, -1.0, 1.0);
+      }
+      nearest.push_back(
+          {distance, closing_alignment, &obstacle});
     }
   }
-  std::sort(nearest.begin(), nearest.end(),
-            [](const auto& left, const auto& right) { return left.first < right.first; });
+  std::sort(
+      nearest.begin(), nearest.end(),
+      [this](const ObstacleCandidate& left,
+             const ObstacleCandidate& right) {
+        if (impl_->obstacle_priority == 1 &&
+            std::abs(left.closing_alignment -
+                     right.closing_alignment) > 1.0e-12) {
+          return left.closing_alignment >
+                 right.closing_alignment;
+        }
+        return left.distance < right.distance;
+      });
   if (nearest.size() > static_cast<std::size_t>(impl_->max_constraints)) {
     nearest.resize(static_cast<std::size_t>(impl_->max_constraints));
   }
@@ -504,7 +545,7 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
   dpcbf_constraints.reserve(nearest.size());
   for (const auto& item : nearest) {
     dpcbf_constraints.push_back(
-        EvaluateConstraint(robot, *item.second));
+        EvaluateConstraint(robot, *item.obstacle));
   }
   result.active_constraints = static_cast<int>(nearest.size());
   result.active_dpcbf_constraints =
@@ -516,15 +557,9 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
           ? static_cast<int>(nearest.size())
           : 0;
 
-  const double robot_velocity_x =
-      robot.sagittal_velocity * std::cos(robot.phi) -
-      robot.lateral_velocity * std::sin(robot.phi);
-  const double robot_velocity_y =
-      robot.sagittal_velocity * std::sin(robot.phi) +
-      robot.lateral_velocity * std::cos(robot.phi);
   result.selected_obstacles.reserve(nearest.size());
   for (std::size_t i = 0; i < nearest.size(); ++i) {
-    const ObstacleState& obstacle = *nearest[i].second;
+    const ObstacleState& obstacle = *nearest[i].obstacle;
     const double px = obstacle.x - robot.x;
     const double py = obstacle.y - robot.y;
     const double los_angle = std::atan2(py, px);
@@ -549,7 +584,7 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
     DpcbfVisualizationObstacle visual;
     visual.obstacle = obstacle;
     visual.constraint = dpcbf_constraints[i];
-    visual.distance = nearest[i].first;
+    visual.distance = nearest[i].distance;
     visual.relative_velocity_world = {relative_x, relative_y};
     visual.relative_velocity_los = {x_tilde, y_tilde};
     visual.boundary_vertex_x = -adaptive_scale * impl_->k_mu * safe_distance;
@@ -590,7 +625,7 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
   if (impl_->ecbf_enabled) {
     for (std::size_t i = 0; i < nearest.size(); ++i) {
       const EcbfConstraint constraint =
-          EvaluateEcbfConstraint(robot, *nearest[i].second);
+          EvaluateEcbfConstraint(robot, *nearest[i].obstacle);
       QpBarrierConstraint qp_constraint;
       qp_constraint.type = BarrierType::kEcbf;
       qp_constraint.row =

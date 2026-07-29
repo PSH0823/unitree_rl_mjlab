@@ -56,6 +56,43 @@ dpcbf::SafetyFilterResult RunFeatureCombination(
   return result;
 }
 
+int SelectPriorityObstacle(const YAML::Node& source_config,
+                           int obstacle_priority) {
+  YAML::Node config = YAML::Clone(source_config);
+  YAML::Node qp = config["qp_parameters"];
+  qp["enabled"] = true;
+  qp["dpcbf_enabled"] = true;
+  qp["ecbf_enabled"] = false;
+  qp["odcbf_enabled"] = false;
+  qp["slack_enabled"] = false;
+  qp["default_num_constraints"] = 1;
+  qp["obstacle_priority"] = obstacle_priority;
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() /
+      ("dpcbf_priority_" + std::to_string(obstacle_priority) +
+       "_test.yaml");
+  {
+    std::ofstream output(path);
+    output << config;
+  }
+
+  dpcbf::DpcbfSafetyFilter filter;
+  filter.LoadConfig(path);
+  filter.Initialize(0.002);
+  const dpcbf::RobotState robot{0.0, 0.0, 0.0, 0.5, 0.0};
+  const dpcbf::VelocityCommand desired{0.5, 0.0, 0.0};
+  const std::vector<dpcbf::ObstacleState> obstacles{
+      {-0.5, 0.0, 0.1, 0.0, 0.0, 10},
+      {2.0, 0.0, 0.1, 0.0, 0.0, 20},
+  };
+  const auto result = filter.Filter(robot, desired, obstacles);
+  std::filesystem::remove(path);
+  if (result.selected_obstacles.size() != 1) {
+    throw std::runtime_error("obstacle priority selection count mismatch");
+  }
+  return result.selected_obstacles.front().obstacle.id;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -236,6 +273,15 @@ int main(int argc, char** argv) {
                      visual.boundary_vertex_x,
                  visual.constraint.h, 2.0e-8,
                  "visualized h=0 boundary");
+    }
+
+    if (SelectPriorityObstacle(config, 0) != 10) {
+      throw std::runtime_error(
+          "distance priority did not select the nearest obstacle");
+    }
+    if (SelectPriorityObstacle(config, 1) != 20) {
+      throw std::runtime_error(
+          "alignment priority did not select the closing obstacle");
     }
 
     const auto dpcbf_only = RunFeatureCombination(

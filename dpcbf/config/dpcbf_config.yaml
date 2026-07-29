@@ -1,9 +1,9 @@
 dynamic_obstacles:
   enabled: true
-  count: 20
+  count: 90
 
   # A radius and a constant speed are sampled once per obstacle at startup.
-  radius_range: [0.1, 0.5]         # meters
+  radius_range: [0.2, 0.3]         # meters
   speed_range: [0.0, 0.8]          # meters/second
   collision_enabled: true          # physical contact between robot and cylinders
   rgba: [0.1, 0.4, 1.0, 0.45]      # translucent blue
@@ -11,19 +11,19 @@ dynamic_obstacles:
   random_seed: 42                  # same value reproduces the same obstacle set
 
   arena:
-    size: [10.0, 10.0]             # width (x), depth (y), meters
+    size: [20.0, 20.0]             # width (x), depth (y), meters
     # G1 starts at (0, 0). With this center, the arena spans x=[1, 11]
     # and y=[-5, 5], so the robot starts 1 m outside the left boundary.
-    center: [6.0, 0.0]
+    center: [0.0, 0.0]
     show_boundary: true
     boundary_thickness: 0.04       # meters; visual only
     boundary_rgba: [0.2, 0.7, 1.0, 0.12]
 
 robot:
   base_body: pelvis                # floating-base body used for MuJoCo ground truth
-  k_mu: 1
-  k_lambda: 0.5
-  r_rob: 0.25                      # meters
+  k_mu: 1                          # 1
+  k_lambda: 0.5                    # 0.5
+  r_rob: 0.30                      # meters
   p_max: 3.0                       # obstacle detection radius, meters
 
   # These match the velocity-command ranges used to train the selected policy.
@@ -50,8 +50,11 @@ qp_parameters:
   # a_s/a_l are normalized at 500 Hz. Applied delta-v is multiplied by
   # reference_control_frequency_hz * actual control_dt.
   reference_control_frequency_hz: 500.0
-  alpha: 2.0
+  alpha: 2.0       # 2.0
   default_num_constraints: 10
+  # 0: nearest distance first
+  # 1: highest relative-velocity closing alignment first, distance as tie-break
+  obstacle_priority: 1
 
   # exponential CBF (eCBF) parameters for distance between robot and obstacles
   ecbf_enabled: true

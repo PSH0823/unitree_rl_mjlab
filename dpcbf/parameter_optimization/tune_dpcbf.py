@@ -29,8 +29,10 @@ except ImportError:
 # evaluated on `rollouts_per_trial` reproducible environments.
 CONFIG: dict[str, Any] = {
     "study": {
-        "study_name": "dpcbf_parameter_tuning",
-        "num_trials": 100,
+        "study_name": "dpcbf_parameter_tuning_radius_0.3",
+        # dpcbf_parameter_tuning: radius 0.25m, 200 trials
+        # dpcbf_parameter_tuning_radius_0.3: radius 0.3m, 200 trials
+        "num_trials": 200,
         "rollouts_per_trial": 100,
         "evaluation_batch_size": 5,
         "sampler_seed": 42,
@@ -72,7 +74,7 @@ CONFIG: dict[str, Any] = {
         "center": [0.0, 0.0],
     },
     "robot": {
-        "r_rob": 0.25,
+        "r_rob": 0.3,
         "p_max": 3.0,
         "v_s_max": 2.0,
         "v_s_min": -1.0,
@@ -97,6 +99,8 @@ CONFIG: dict[str, Any] = {
         "k_a_s": 1.0,
         "k_a_l": 1.0,
         "default_num_constraints": 10,
+        # 0: distance, 1: relative-velocity closing alignment
+        "obstacle_priority": 0,
         # a_s/a_l are normalized at this reference rate. Their actual per-tick
         # velocity change is multiplied by reference_rate * control_dt.
         "reference_control_frequency_hz": 500.0,
