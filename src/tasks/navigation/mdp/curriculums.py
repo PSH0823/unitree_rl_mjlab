@@ -29,13 +29,13 @@ def obstacle_curriculum(env, env_ids, cfg: NavigationTaskCfg):
       and state.curriculum_stage < max_stage
     ):
       state.curriculum_stage += 1
-      state.success_ema.fill_(0.5)
+      state.success_ema.fill_(0.50)
     elif (
       state.success_ema <= cfg.curriculum.demote_threshold
       and state.curriculum_stage > 0
     ):
       state.curriculum_stage -= 1
-      state.success_ema.fill_(0.65)
+      state.success_ema.fill_(0.60)
   return {
     "stage": state.curriculum_stage,
     "success_ema": state.success_ema,

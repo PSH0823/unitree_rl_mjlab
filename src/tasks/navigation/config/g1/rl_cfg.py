@@ -51,7 +51,7 @@ def unitree_g1_navigation_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     experiment_name="g1_dpcbf_navigation",
     run_name="gat",
     num_steps_per_env=32,
-    max_iterations=1001,
+    max_iterations=4001,
     save_interval=50,
     clip_actions=1.0,
   )

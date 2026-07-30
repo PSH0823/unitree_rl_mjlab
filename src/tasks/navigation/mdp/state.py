@@ -387,6 +387,7 @@ class NavigationState:
     ca, sa = torch.cos(alpha_los), torch.sin(alpha_los)
     x_tilde = ca * rel_vel[..., 0] + sa * rel_vel[..., 1]
     y_tilde = -sa * rel_vel[..., 0] + ca * rel_vel[..., 1]
+    
     safe_velocity = torch.sqrt((rel_vel * rel_vel).sum(-1) + self.cfg.robot.eps_v**2)
     safe_radius = (
       self.cfg.robot.r_rob + obs_radius
@@ -415,22 +416,16 @@ class NavigationState:
       2.0 * lam * x_tilde * y_tilde * px / p2
       - py * position_term / smooth_clearance
     )
+
     phi_tilde = phi[:, None] - alpha_los
     cosine, sine = torch.cos(phi_tilde), torch.sin(phi_tilde)
     vs, vl = vel_b[:, 0:1], vel_b[:, 1:2]
     v1 = vs * sine + vl * cosine
     v2 = vs * cosine - vl * sine
     velocity_cubed = safe_velocity.pow(3)
-    common_x = (
-      self.cfg.dpcbf.k_lambda
-      * safe_distance
-      * x_tilde
-      * y_tilde.square()
-      / velocity_cubed
-    )
-    common_y = self.cfg.dpcbf.k_lambda * safe_distance * (
-      2.0 * y_tilde / safe_velocity - y_tilde.pow(3) / velocity_cubed
-    )
+    common_x = (self.cfg.dpcbf.k_lambda * safe_distance * x_tilde * y_tilde.square() / velocity_cubed)
+    common_y = self.cfg.dpcbf.k_lambda * safe_distance * ( 2.0 * y_tilde / safe_velocity - y_tilde.pow(3) / velocity_cubed)
+
     dh_dphi = v1 - adaptive * (v1 * common_x + v2 * common_y)
     dh_dvs = -cosine + adaptive * (cosine * common_x - sine * common_y)
     dh_dvl = sine - adaptive * (sine * common_x + cosine * common_y)

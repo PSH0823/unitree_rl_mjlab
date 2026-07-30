@@ -86,7 +86,6 @@ def cbf_reward(env, cfg: NavigationTaskCfg) -> torch.Tensor:
   reward = (
     torch.minimum(condition, torch.zeros_like(condition))
     + torch.exp(-intervention / sigma_squared)
-    - 1.0
   )
   return reward * _active(env)
 

@@ -14,7 +14,7 @@ class ObstacleCfg:
   count: int = 20
   max_count: int = 20
   radius_range: tuple[float, float] = (0.2, 0.3)
-  speed_range: tuple[float, float] = (0.0, 0.8)
+  speed_range: tuple[float, float] = (0.0, 0.6)
   height: float = 1.5
   rgba: tuple[float, float, float, float] = (0.1, 0.4, 1.0, 0.65)
   collision_enabled: bool = True
@@ -46,7 +46,7 @@ class RobotCfg:
   safety_factor: float = 1.05
   eps_v: float = 0.05
   eps_d: float = 0.05
-  collision_grace_s: float = 1.0
+  collision_grace_s: float = 0.5
 
 
 @dataclass
@@ -65,8 +65,8 @@ class GoalCfg:
   min_distance: float = 2.0
   max_distance: float = 6.0
   heading_progress_distance_scale: float = 1.0
-  maximum_speed: float = 0.50
-  maximum_yaw_rate: float = 0.30
+  maximum_speed: float = 0.2
+  maximum_yaw_rate: float = 0.2
 
 
 @dataclass
@@ -110,7 +110,7 @@ class CurriculumCfg:
   enabled: bool = True
   success_ema_rate: float = 0.02
   promote_threshold: float = 0.80
-  demote_threshold: float = 0.55
+  demote_threshold: float = 0.40
   stages: tuple[dict[str, float], ...] = (
     {
       "obstacle_fraction": 0.3,
@@ -146,18 +146,18 @@ class CurriculumCfg:
 @dataclass
 class RewardCfg:
   progress_weight: float = 60.0
-  heading_progress_weight: float = 10.0
-  goal_weight: float = 1.0
-  collision_weight: float = -1.0
-  route_box_weight: float = -0.5
-  wall_collision_weight: float = -1.0
+  heading_progress_weight: float = 5.0
+  goal_weight: float = 20.0
+  collision_weight: float = -5.0
+  route_box_weight: float = -1.0
+  wall_collision_weight: float = -10.0
   cbf_weight: float = 100.0
   action_rate_weight: float = -0.02
   time_weight: float = -0.01
-  timeout_weight: float = -10.0
-  persistent_collision_weight: float = -5.0
-  hard_outside_weight: float = -10.0
-  fallen_weight: float = -10.0
+  timeout_weight: float = -15.0
+  persistent_collision_weight: float = -50.0
+  hard_outside_weight: float = -50.0
+  fallen_weight: float = -100.0
 
 
 @dataclass
