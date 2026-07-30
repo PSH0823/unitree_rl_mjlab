@@ -8,7 +8,11 @@ import torch
 from mjlab.envs.mdp.dr.geom import _recompute_geom_bounds
 from mjlab.managers.event_manager import requires_model_fields
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.utils.lab_api.math import euler_xyz_from_quat
+from mjlab.utils.lab_api.math import (
+  euler_xyz_from_quat,
+  quat_from_euler_xyz,
+  quat_mul,
+)
 
 from ..navigation_config import NavigationTaskCfg
 
@@ -38,12 +42,24 @@ class NavigationState:
     )
     self.active = torch.zeros(b, n, dtype=torch.bool, device=self.device)
     self.goal = torch.zeros(b, 2, device=self.device)
+    self.goal_heading = torch.zeros(b, device=self.device)
+    self.start_position = torch.zeros(b, 2, device=self.device)
     self.previous_goal_distance = torch.zeros(b, device=self.device)
+    self.previous_heading_error = torch.zeros(b, device=self.device)
+    self.collision_steps = torch.zeros(b, dtype=torch.long, device=self.device)
+    self.outside_arena_steps = torch.zeros(
+      b, dtype=torch.long, device=self.device
+    )
     self.position_bias = torch.zeros_like(self.position)
+    self.robot_position_bias = torch.zeros(b, 2, device=self.device)
+    self.robot_yaw_bias = torch.zeros(b, device=self.device)
+    self.robot_position_walk = torch.zeros(b, 2, device=self.device)
+    self.robot_yaw_walk = torch.zeros(b, device=self.device)
     self.success_ema = torch.tensor(0.0, device=self.device)
     self.curriculum_stage = 0
     self._latency = max(0, cfg.perception.latency_steps)
     self._perception_history: list[tuple[torch.Tensor, ...]] = []
+    self._robot_state_history: list[tuple[torch.Tensor, ...]] = []
     self._last_selected = None
 
   @property
@@ -61,16 +77,66 @@ class NavigationState:
     yaw_rate = data.root_link_ang_vel_b[:, 2]
     return pos, yaw, vel_b, vel_w, yaw_rate
 
+  def perceived_robot_planar_state(self) -> tuple[torch.Tensor, ...]:
+    """Return one coherent noisy/delayed actor state-estimation snapshot."""
+    pos, yaw, vel_b, _, yaw_rate = self.robot_planar_state()
+    cfg = self.cfg.robot_state_randomization
+    difficulty = self.difficulty()["noise_fraction"]
+    if cfg.enabled:
+      self.robot_position_walk += (
+        torch.randn_like(self.robot_position_walk)
+        * cfg.position_random_walk_std
+        * difficulty
+      )
+      self.robot_yaw_walk += (
+        torch.randn_like(self.robot_yaw_walk)
+        * cfg.yaw_random_walk_std
+        * difficulty
+      )
+      pos = (
+        pos
+        + (self.robot_position_bias + self.robot_position_walk) * difficulty
+        + torch.randn_like(pos) * cfg.position_std * difficulty
+      )
+      yaw = (
+        yaw
+        + (self.robot_yaw_bias + self.robot_yaw_walk) * difficulty
+        + torch.randn_like(yaw) * cfg.yaw_std * difficulty
+      )
+      vel_b = (
+        vel_b + torch.randn_like(vel_b) * cfg.velocity_std * difficulty
+      )
+      yaw_rate = (
+        yaw_rate
+        + torch.randn_like(yaw_rate) * cfg.yaw_rate_std * difficulty
+      )
+    yaw = torch.atan2(torch.sin(yaw), torch.cos(yaw))
+    c, s = torch.cos(yaw), torch.sin(yaw)
+    vel_w = torch.stack(
+      (c * vel_b[:, 0] - s * vel_b[:, 1], s * vel_b[:, 0] + c * vel_b[:, 1]),
+      dim=-1,
+    )
+    snapshot = (pos, yaw, vel_b, vel_w, yaw_rate)
+    self._robot_state_history.append(tuple(x.clone() for x in snapshot))
+    latency = max(0, cfg.latency_steps)
+    if len(self._robot_state_history) > latency + 1:
+      self._robot_state_history.pop(0)
+    effective_latency = min(
+      round(latency * difficulty), len(self._robot_state_history) - 1
+    )
+    return self._robot_state_history[-1 - effective_latency]
+
   def difficulty(self) -> dict[str, float]:
     if not self.cfg.curriculum.enabled:
-      return {
-        "obstacle_fraction": 1.0,
-        "speed_fraction": 1.0,
-        "noise_fraction": 1.0,
-      }
+      # Play disables curriculum progression and evaluates the final stage.
+      # Keeping one source of truth makes edits such as 30/20/10 degrees apply
+      # to play automatically.
+      return self.cfg.curriculum.stages[-1]
     return self.cfg.curriculum.stages[self.curriculum_stage]
 
-  def reset(self, env_ids: torch.Tensor) -> None:
+  def reset(
+    self, env_ids: torch.Tensor, robot_pos: torch.Tensor, robot_yaw: torch.Tensor
+  ) -> None:
     count = env_ids.numel()
     if count == 0:
       return
@@ -96,11 +162,7 @@ class NavigationState:
     )
     self.velocity[env_ids] *= self.active[env_ids].unsqueeze(-1)
 
-    # ``reset_root_state_uniform`` writes the configured reset pose immediately
-    # before this event, but derived link poses are intentionally not forwarded
-    # until all reset events finish.  The configured planar reset offset is
-    # exactly zero, so use that fresh local pose rather than stale link data.
-    robot_pos = torch.zeros(count, 2, device=device)
+    self.start_position[env_ids] = robot_pos
     half = torch.tensor(cfg.arena.size, device=device) * 0.5
     center = torch.tensor(cfg.arena.center, device=device)
     lower, upper = center - half, center + half
@@ -121,10 +183,30 @@ class NavigationState:
     self.previous_goal_distance[env_ids] = torch.linalg.vector_norm(
       self.goal[env_ids] - robot_pos, dim=-1
     )
+    self.previous_heading_error[env_ids] = torch.abs(
+      torch.atan2(
+        torch.sin(self.goal_heading[env_ids] - robot_yaw),
+        torch.cos(self.goal_heading[env_ids] - robot_yaw),
+      )
+    )
+    self.collision_steps[env_ids] = 0
+    self.outside_arena_steps[env_ids] = 0
     bias_std = cfg.perception.per_episode_position_bias_std
     self.position_bias[env_ids] = torch.randn_like(sampled) * bias_std
+    robot_noise = cfg.robot_state_randomization
+    self.robot_position_bias[env_ids] = (
+      torch.randn(count, 2, device=device)
+      * robot_noise.per_episode_position_bias_std
+    )
+    self.robot_yaw_bias[env_ids] = (
+      torch.randn(count, device=device)
+      * robot_noise.per_episode_yaw_bias_std
+    )
+    self.robot_position_walk[env_ids] = 0.0
+    self.robot_yaw_walk[env_ids] = 0.0
     self._write_obstacles(env_ids, update_size=True)
     self._perception_history.clear()
+    self._robot_state_history.clear()
 
   def sample_goal(
     self, env_ids: torch.Tensor, robot_pos: torch.Tensor | None = None
@@ -161,20 +243,32 @@ class NavigationState:
           < clearance
         )
       ).any(dim=-1)
-      accepted = pending & ~overlap
+      actual_distance = torch.linalg.vector_norm(candidate - robot_pos, dim=-1)
+      invalid_distance = (
+        (actual_distance < cfg.goal.min_distance)
+        | (actual_distance > cfg.goal.max_distance)
+      )
+      rejected = overlap | invalid_distance
+      accepted = pending & ~rejected
       proposed = torch.where(accepted[:, None], candidate, proposed)
-      pending &= overlap
+      pending &= rejected
       if not pending.any():
         break
     if pending.any():
       proposed[pending] = candidate[pending]
     self.goal[env_ids] = proposed
+    self.goal_heading[env_ids] = (
+      2.0 * torch.pi * torch.rand(env_ids.numel(), device=self.device) - torch.pi
+    )
     pose = torch.zeros(env_ids.numel(), 7, device=self.device)
     pose[:, :2] = (
       self.goal[env_ids] + self.env.scene.env_origins[env_ids, :2]
     )
     pose[:, 2] = 0.03
-    pose[:, 3] = 1.0
+    zeros = torch.zeros(env_ids.numel(), device=self.device)
+    pose[:, 3:7] = quat_from_euler_xyz(
+      zeros, zeros, self.goal_heading[env_ids]
+    )
     self.env.scene["goal_marker"].write_mocap_pose_to_sim(pose, env_ids)
 
   def step_obstacles(self, dt: float) -> None:
@@ -246,14 +340,18 @@ class NavigationState:
     return self._perception_history[-1 - effective_latency]
 
   def select_obstacles(
-    self, noisy: bool = True
+    self,
+    noisy: bool = True,
+    robot_state: tuple[torch.Tensor, ...] | None = None,
   ) -> tuple[torch.Tensor, ...]:
     obs_pos, obs_vel, radius, active = (
       self.perceived()
       if noisy
       else (self.position, self.velocity, self.radius, self.active)
     )
-    robot_pos, _, _, robot_vel_w, _ = self.robot_planar_state()
+    if robot_state is None:
+      robot_state = self.robot_planar_state()
+    robot_pos, _, _, robot_vel_w, _ = robot_state
     rel_pos = obs_pos - robot_pos[:, None, :]
     rel_vel = obs_vel - robot_vel_w[:, None, :]
     distance = torch.linalg.vector_norm(rel_pos, dim=-1)
@@ -398,28 +496,70 @@ def get_navigation_state(env, cfg: NavigationTaskCfg) -> NavigationState:
 
 
 @requires_model_fields("geom_size", "geom_rbound", "geom_aabb")
-def reset_navigation(env, env_ids, cfg: NavigationTaskCfg) -> None:
+def reset_navigation_scene(env, env_ids, cfg: NavigationTaskCfg) -> None:
+  """Reset root pose and navigation state from the same sampled start pose."""
   if env_ids is None:
-    env_ids = torch.arange(env.num_envs, device=env.device)
-  get_navigation_state(env, cfg).reset(env_ids.to(dtype=torch.int))
+    env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.int)
+  else:
+    env_ids = env_ids.to(dtype=torch.int)
+  state = get_navigation_state(env, cfg)
+  count = env_ids.numel()
+  extent = state.difficulty()["start_position_extent"]
+  half = torch.tensor(cfg.arena.size, device=env.device) * 0.5
+  center = torch.tensor(cfg.arena.center, device=env.device)
+  limit = half - cfg.robot.r_rob - cfg.arena.boundary_margin
+  extent_xy = torch.minimum(
+    torch.full_like(limit, extent),
+    limit,
+  )
+  robot_pos = center + (
+    2.0 * torch.rand(count, 2, device=env.device) - 1.0
+  ) * extent_xy
+  robot_yaw = (
+    2.0 * torch.pi * torch.rand(count, device=env.device) - torch.pi
+  )
+
+  robot = env.scene["robot"]
+  default_state = robot.data.default_root_state
+  assert default_state is not None
+  root_state = default_state[env_ids].clone()
+  root_state[:, :3] += env.scene.env_origins[env_ids]
+  root_state[:, :2] += robot_pos
+  zeros = torch.zeros(count, device=env.device)
+  yaw_quat = quat_from_euler_xyz(zeros, zeros, robot_yaw)
+  root_state[:, 3:7] = quat_mul(root_state[:, 3:7], yaw_quat)
+  robot.write_root_link_pose_to_sim(root_state[:, :7], env_ids=env_ids)
+  robot.write_root_link_velocity_to_sim(root_state[:, 7:13], env_ids=env_ids)
+  actual_pos = root_state[:, :2] - env.scene.env_origins[env_ids, :2]
+  _, _, actual_yaw = euler_xyz_from_quat(root_state[:, 3:7])
+  state.reset(env_ids, robot_pos=actual_pos, robot_yaw=actual_yaw)
 
 
 def resample_play_goals(
   env, env_ids, cfg: NavigationTaskCfg, dt: float | None = None
 ) -> None:
-  del dt
-  del env_ids
+  """Chain play goals without resetting the robot or its velocity command."""
+  del env_ids, dt
+  # Local import avoids a module cycle while keeping the success definition
+  # exactly identical to the training termination.
+  from .terminations import goal_reached
+
   state = get_navigation_state(env, cfg)
-  if not cfg.goal.resample_on_success_in_play:
+  reached_ids = torch.nonzero(
+    goal_reached(env, cfg), as_tuple=False
+  ).squeeze(-1)
+  if reached_ids.numel() == 0:
     return
-  robot_pos, _, _, _, _ = state.robot_planar_state()
-  reached = (
-    torch.linalg.vector_norm(state.goal - robot_pos, dim=-1)
-    <= cfg.robot.r_rob + cfg.goal.radius
+
+  robot_pos, robot_yaw, _, _, _ = state.robot_planar_state()
+  state.start_position[reached_ids] = robot_pos[reached_ids]
+  state.sample_goal(reached_ids, robot_pos=robot_pos[reached_ids])
+  state.previous_goal_distance[reached_ids] = torch.linalg.vector_norm(
+    state.goal[reached_ids] - robot_pos[reached_ids], dim=-1
   )
-  ids = torch.nonzero(reached, as_tuple=False).squeeze(-1)
-  if ids.numel():
-    state.sample_goal(ids)
-    state.previous_goal_distance[ids] = torch.linalg.vector_norm(
-      state.goal[ids] - robot_pos[ids], dim=-1
+  state.previous_heading_error[reached_ids] = torch.abs(
+    torch.atan2(
+      torch.sin(state.goal_heading[reached_ids] - robot_yaw[reached_ids]),
+      torch.cos(state.goal_heading[reached_ids] - robot_yaw[reached_ids]),
     )
+  )

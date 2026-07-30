@@ -15,14 +15,18 @@ Important options:
 - `obstacle.priority = 0`: nearest obstacles first.
 - `obstacle.priority = 1`: strongest closing relative-velocity alignment first,
   with distance as the tie-break.
-- `actor_state_mode = "gat_only"`: only the learned GAT embedding.(recommended)
+- `actor_state_mode = "gat_only"`: only the learned GAT embedding.
 - `actor_state_mode = "local"`: GAT embedding plus
-  `[v_s, v_l, yaw_rate, previous_action(3)]`.
+  `[arena_position(2), sin(yaw), cos(yaw), v_s, v_l, yaw_rate,
+  velocity_command(3), previous_action(3), sin(goal_heading_error),
+  cos(goal_heading_error)]`.
 - `dpcbf.{k_mu,k_lambda,alpha}`: pure DPCBF reward parameters. There are no
   eCBF, optimal-decay, or slack-variable branches in this task.
 - `dpcbf.filter_actions`: apply the closed-form active-row DPCBF projection
   during training. Play mode disables it to evaluate the learned policy without
   a runtime filter, as in CBF-RL.
+- `arena.route_box_margin = 0.5`: the soft route corridor is the rectangle
+  whose diagonal corners are the episode start and goal, expanded by 0.5 m.
 
 `max_count` fixes the compiled scene and graph size. `count` can be changed up
 to `max_count` without changing code. If `max_count` or `num_constraints` is
@@ -42,8 +46,8 @@ Labels are robot `[1,0,0]`, obstacle `[0,1,0]`, and goal `[0,0,1]`. `psi1`
 creates edge messages from the two labels and
 `[dx,dy,surface_distance,dvx,dvy]`; `psi2` computes attention; and `psi3`
 updates messages before the weighted sum. The GAT is inside the RSL-RL actor, so
-PPO trains it jointly with the policy head. With no detected obstacle, one valid
-dummy node uses relative position `(100,100)` and radius `0.2`.
+PPO trains it jointly with the policy head. Undetected/padding obstacles remain
+masked; there is no large-coordinate dummy node.
 
 ## DPCBF reward and action flow
 
@@ -74,16 +78,34 @@ must account for that normalization if desired.
 
 ## Randomization policy
 
-Actor perception receives position/radius/velocity noise, episode-correlated
-position bias, dropout and a FIFO latency. Actions receive acceleration scale
-error, acceleration/yaw-rate noise and latency. The critic, reward, collision,
-and termination paths use ground truth. This prevents noisy labels from
-changing the task itself while training the actor for LiDAR-like errors.
+Actor obstacle perception receives position/radius/velocity noise,
+episode-correlated position bias, dropout and FIFO latency. Actor robot state
+(`x,y`, yaw, body linear velocity, and yaw rate) receives white noise,
+episode-correlated pose bias, pose random walk, and FIFO latency. Actions
+receive acceleration scale error, acceleration/yaw-rate noise and latency. The
+critic, reward, collision, and termination paths use ground truth.
 
-The success-rate curriculum increases obstacle count, obstacle speed, and then
-sensor/action randomization over four stages. Play mode uses full obstacle
-difficulty, disables corruption, and samples another random goal whenever the
-current goal is reached.
+The success-rate curriculum increases obstacle count, obstacle speed, start
+range (`±1`, `±2.5`, then `±4 m`), and sensor/action randomization over four
+stages. Goal heading tolerance tightens from `30°` to `20°` and then `10°`;
+play evaluates that final `10°` stage.
+Success additionally requires speed below `0.2 m/s` and yaw rate below
+`0.2 rad/s`.
+
+Obstacle contact costs `-5` per 10 Hz step and terminates only after 0.5 s of
+consecutive contact (`-50` terminal cost). Crossing the arena footprint costs
+`-10` per step and terminates after 2 s outside or 1 m excessive departure
+(`-50`). Route-corridor departure costs `-1` per step without termination.
+Falling costs `-100`, timeout costs `-15`, and valid pose-goal success gives
+`+20`. Training terminates on goal success with a 30 s timeout. Play does not
+terminate or reset on success: the reached pose becomes the next route-box
+start and a new goal is sampled continuously. Play has no practical time limit,
+while collision, arena-departure, and fall terminations remain active.
+
+The actor uses a tanh-squashed Gaussian, so sampled actions are truly bounded
+to `[-1,1]`. PPO starts with standard deviation `0.3`, uses entropy coefficient
+`0.001`, and defaults to 4000 iterations to reduce the late-training action
+variance growth observed in the older 9900-step checkpoint.
 
 ## Run
 

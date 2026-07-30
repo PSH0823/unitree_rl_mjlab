@@ -60,6 +60,15 @@ def _goal_spec(radius: float) -> mujoco.MjSpec:
     contype=0,
     conaffinity=0,
   )
+  body.add_geom(
+    name="goal_heading",
+    type=mujoco.mjtGeom.mjGEOM_BOX,
+    pos=(radius * 0.35, 0.0, 0.055),
+    size=(radius * 0.55, 0.035, 0.025),
+    rgba=(1.0, 0.75, 0.1, 0.9),
+    contype=0,
+    conaffinity=0,
+  )
   return spec
 
 
@@ -95,6 +104,7 @@ def make_g1_navigation_env_cfg(
   if play:
     task_cfg.curriculum.enabled = False
     task_cfg.perception.enabled = False
+    task_cfg.robot_state_randomization.enabled = False
     task_cfg.action_randomization.enabled = False
     # CBF-RL trains with filtered rollouts but deploys the learned policy
     # without a runtime filter.
@@ -150,17 +160,10 @@ def make_g1_navigation_env_cfg(
     )
   }
   events = {
-    "reset_base": EventTermCfg(
-      func=envs_mdp.reset_root_state_uniform,
+    "reset_navigation_scene": EventTermCfg(
+      func=mdp.reset_navigation_scene,
       mode="reset",
-      params={
-        "pose_range": {
-          "x": (0.0, 0.0),
-          "y": (0.0, 0.0),
-          "yaw": (-3.14159, 3.14159),
-        },
-        "velocity_range": {},
-      },
+      params={"cfg": task_cfg},
     ),
     "reset_joints": EventTermCfg(
       func=envs_mdp.reset_joints_by_offset,
@@ -170,11 +173,6 @@ def make_g1_navigation_env_cfg(
         "velocity_range": (0.0, 0.0),
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
-    ),
-    "reset_navigation": EventTermCfg(
-      func=mdp.reset_navigation,
-      mode="reset",
-      params={"cfg": task_cfg},
     ),
   }
   if play:
@@ -189,6 +187,11 @@ def make_g1_navigation_env_cfg(
     "progress": RewardTermCfg(
       func=mdp.goal_progress,
       weight=reward_cfg.progress_weight,
+      params={"cfg": task_cfg},
+    ),
+    "heading_progress": RewardTermCfg(
+      func=mdp.heading_progress,
+      weight=reward_cfg.heading_progress_weight,
       params={"cfg": task_cfg},
     ),
     "goal": RewardTermCfg(
@@ -206,6 +209,11 @@ def make_g1_navigation_env_cfg(
       weight=reward_cfg.wall_collision_weight,
       params={"cfg": task_cfg},
     ),
+    "route_box": RewardTermCfg(
+      func=mdp.route_box_penalty,
+      weight=reward_cfg.route_box_weight,
+      params={"cfg": task_cfg},
+    ),
     "cbf": RewardTermCfg(
       func=mdp.cbf_reward,
       weight=reward_cfg.cbf_weight,
@@ -217,6 +225,21 @@ def make_g1_navigation_env_cfg(
     "time": RewardTermCfg(func=mdp.constant, weight=reward_cfg.time_weight),
     "timeout": RewardTermCfg(
       func=mdp.timeout_penalty, weight=reward_cfg.timeout_weight
+    ),
+    "persistent_collision": RewardTermCfg(
+      func=mdp.termination_penalty,
+      weight=reward_cfg.persistent_collision_weight,
+      params={"term_name": "collision"},
+    ),
+    "hard_outside": RewardTermCfg(
+      func=mdp.termination_penalty,
+      weight=reward_cfg.hard_outside_weight,
+      params={"term_name": "outside_arena"},
+    ),
+    "fallen": RewardTermCfg(
+      func=mdp.termination_penalty,
+      weight=reward_cfg.fallen_weight,
+      params={"term_name": "fallen"},
     ),
   }
 

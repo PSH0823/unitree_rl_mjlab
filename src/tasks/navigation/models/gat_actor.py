@@ -73,7 +73,7 @@ class GATActorModel(MLPModel):
     num_nodes: int = 12,
     node_dim: int = 9,
     gat_embedding_dim: int = 16,
-    local_state_dim: int = 6,
+    local_state_dim: int = 15,
     **kwargs,
   ) -> None:
     self.num_nodes = num_nodes
@@ -94,4 +94,3 @@ class GATActorModel(MLPModel):
     nodes = flat[..., :graph_dim].reshape(*flat.shape[:-1], self.num_nodes, self.node_dim)
     local = flat[..., graph_dim : graph_dim + self.local_state_dim]
     return torch.cat((self.gat(nodes), local), dim=-1)
-

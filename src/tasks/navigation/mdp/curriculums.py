@@ -18,12 +18,9 @@ def obstacle_curriculum(env, env_ids, cfg: NavigationTaskCfg):
   completed = env.episode_length_buf[ids] > 0
   if completed.any():
     ids = ids[completed]
-    robot_pos_all, _, _, _, _ = state.robot_planar_state()
-    robot_pos = robot_pos_all[ids]
-    successes = (
-      torch.linalg.vector_norm(state.goal[ids] - robot_pos, dim=-1)
-      <= cfg.robot.r_rob + cfg.goal.radius
-    ).float()
+    # Promotion uses the exact terminal success definition: position, desired
+    # heading and settled linear/angular velocity.
+    successes = env.termination_manager.get_term("goal_reached")[ids].float()
     rate = cfg.curriculum.success_ema_rate
     state.success_ema.mul_(1.0 - rate).add_(rate * successes.mean())
     max_stage = len(cfg.curriculum.stages) - 1

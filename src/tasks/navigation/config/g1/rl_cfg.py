@@ -12,12 +12,12 @@ class GATModelCfg(RslRlModelCfg):
   num_nodes: int = 12
   node_dim: int = 9
   gat_embedding_dim: int = 16
-  local_state_dim: int = 6
+  local_state_dim: int = 15
 
 
 def unitree_g1_navigation_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   cfg = NAVIGATION_CFG
-  local_dim = 0 if cfg.actor_state_mode == "gat_only" else 6
+  local_dim = 0 if cfg.actor_state_mode == "gat_only" else 15
   return RslRlOnPolicyRunnerCfg(
     actor=GATModelCfg(
       class_name="src.tasks.navigation.models:GATActorModel",
@@ -25,9 +25,10 @@ def unitree_g1_navigation_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       activation="elu",
       obs_normalization=False,
       distribution_cfg={
-        "class_name": "GaussianDistribution",
-        "init_std": 0.6,
-        "std_type": "scalar",
+        "class_name": (
+          "src.tasks.navigation.models:TanhGaussianDistribution"
+        ),
+        "init_std": 0.3,
       },
       num_nodes=cfg.obstacle.num_constraints + 2,
       local_state_dim=local_dim,
@@ -43,15 +44,14 @@ def unitree_g1_navigation_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       num_mini_batches=8,
       gamma=0.99,
       lam=0.95,
-      entropy_coef=0.005,
+      entropy_coef=0.001,
       desired_kl=0.01,
       max_grad_norm=1.0,
     ),
     experiment_name="g1_dpcbf_navigation",
     run_name="gat",
     num_steps_per_env=32,
-    max_iterations=10000,
-    save_interval=100,
+    max_iterations=1001,
+    save_interval=50,
     clip_actions=1.0,
   )
-

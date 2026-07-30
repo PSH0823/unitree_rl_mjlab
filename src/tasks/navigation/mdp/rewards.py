@@ -6,6 +6,7 @@ import torch
 
 from ..navigation_config import NavigationTaskCfg
 from .state import get_navigation_state
+from .terminations import arena_contact, goal_reached, obstacle_contact
 
 
 def _active(env) -> torch.Tensor:
@@ -21,40 +22,47 @@ def goal_progress(env, cfg: NavigationTaskCfg) -> torch.Tensor:
   return progress * _active(env)
 
 
-def goal_reached_reward(env, cfg: NavigationTaskCfg) -> torch.Tensor:
+def heading_progress(env, cfg: NavigationTaskCfg) -> torch.Tensor:
+  """Reward reduced heading error only near the goal."""
   state = get_navigation_state(env, cfg)
-  robot_pos, _, _, _, _ = state.robot_planar_state()
-  distance = torch.linalg.vector_norm(
-    state.goal - robot_pos, dim=-1
+  robot_pos, yaw, _, _, _ = state.robot_planar_state()
+  distance = torch.linalg.vector_norm(state.goal - robot_pos, dim=-1)
+  heading_error = torch.abs(
+    torch.atan2(
+      torch.sin(state.goal_heading - yaw),
+      torch.cos(state.goal_heading - yaw),
+    )
   )
-  reached = distance <= cfg.robot.r_rob + cfg.goal.radius
-  collision = env.termination_manager.get_term("collision")
-  wall_collision = env.termination_manager.get_term("outside_arena")
-  return (reached & ~collision & ~wall_collision).float()
+  progress = state.previous_heading_error - heading_error
+  state.previous_heading_error[:] = heading_error
+  scale = cfg.goal.heading_progress_distance_scale
+  gate = torch.exp(-torch.square(distance / scale))
+  return progress * gate * _active(env)
+
+
+def goal_reached_reward(env, cfg: NavigationTaskCfg) -> torch.Tensor:
+  reached = goal_reached(env, cfg)
+  return (
+    reached & ~obstacle_contact(env, cfg) & ~arena_contact(env, cfg)
+  ).float()
 
 
 def obstacle_collision_penalty(env, cfg: NavigationTaskCfg) -> torch.Tensor:
-  state = get_navigation_state(env, cfg)
-  robot_pos, _, _, _, _ = state.robot_planar_state()
-  distance = torch.linalg.vector_norm(
-    state.position - robot_pos[:, None, :], dim=-1
-  )
-  collision = state.active & (
-    distance <= state.radius + cfg.robot.r_rob
-  )
-  return collision.any(dim=-1).float()
+  return obstacle_contact(env, cfg).float()
 
 
 def wall_collision_penalty(env, cfg: NavigationTaskCfg) -> torch.Tensor:
+  return arena_contact(env, cfg).float()
+
+
+def route_box_penalty(env, cfg: NavigationTaskCfg) -> torch.Tensor:
+  """Penalize time outside the start-goal diagonal rectangle plus 0.5 m."""
   state = get_navigation_state(env, cfg)
   robot_pos, _, _, _, _ = state.robot_planar_state()
-  center = torch.tensor(cfg.arena.center, device=env.device)
-  half = torch.tensor(cfg.arena.size, device=env.device) * 0.5
-  wall_collision = (
-    torch.abs(robot_pos - center) >= half - cfg.robot.r_rob
-  ).any(dim=-1)
-  obstacle_collision = env.termination_manager.get_term("collision")
-  return (wall_collision & ~obstacle_collision).float()
+  margin = cfg.arena.route_box_margin
+  lower = torch.minimum(state.start_position, state.goal) - margin
+  upper = torch.maximum(state.start_position, state.goal) + margin
+  return ((robot_pos < lower) | (robot_pos > upper)).any(dim=-1).float()
 
 
 def cbf_reward(env, cfg: NavigationTaskCfg) -> torch.Tensor:
@@ -95,3 +103,7 @@ def constant(env) -> torch.Tensor:
 
 def timeout_penalty(env) -> torch.Tensor:
   return env.reset_time_outs.float()
+
+
+def termination_penalty(env, term_name: str) -> torch.Tensor:
+  return env.termination_manager.get_term(term_name).float()
