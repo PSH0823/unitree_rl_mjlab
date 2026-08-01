@@ -29,6 +29,15 @@ from sim_msgs.msg import MjState
 TICK = 0.005  # 200 Hz wall pacing, sim time advances at RT factor 1
 
 
+def _fold(p, lo, hi):
+    """Reflect p into [lo, hi]; returns (position, velocity sign)."""
+    span = hi - lo
+    phase = (p - lo) % (2.0 * span)
+    if phase <= span:
+        return lo + phase, 1.0
+    return lo + 2.0 * span - phase, -1.0
+
+
 def obstacle_state(ob, t, park):
     """Return ([x, y], [vx, vy]) for obstacle `ob` at sim time `t`."""
     if ob['mode'] == 'static':
@@ -42,6 +51,15 @@ def obstacle_state(ob, t, park):
         moving = 0.0 < s < length
         return ([p0[0] + ux * s, p0[1] + uy * s],
                 [v * ux, v * uy] if moving else [0.0, 0.0])
+    if ob['mode'] == 'reflect':
+        # Straight-line motion with box-boundary reflection (S3, the
+        # DynamicObstacleManager motion model), closed form via folding —
+        # deterministic in t, no integration state.
+        dt = max(0.0, t - ob['t_start'])
+        box = ob['box']
+        x, sx = _fold(ob['p0'][0] + ob['v0'][0] * dt, *box['x'])
+        y, sy = _fold(ob['p0'][1] + ob['v0'][1] * dt, *box['y'])
+        return [x, y], [ob['v0'][0] * sx, ob['v0'][1] * sy]
     raise ValueError(f"unknown obstacle mode {ob['mode']}")
 
 
@@ -115,8 +133,8 @@ class ScenarioStateSource(Node):
                 c.uid = i
                 c.center.x, c.center.y, c.center.z = xy[0], xy[1], 0.0
                 c.velocity.x, c.velocity.y = vel[0], vel[1]
-                c.radius = self.radius
-                c.true_radius = self.radius
+                c.radius = ob.get('radius', self.radius)
+                c.true_radius = ob.get('radius', self.radius)
                 gt.circles.append(c)
             self.gt_pub.publish(gt)
 

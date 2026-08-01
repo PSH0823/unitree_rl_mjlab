@@ -1,8 +1,8 @@
 """RViz2 + obstacle marker relays (§14.4).
 
-Three relays overlay GT (green, ground truth), raw (grey, extractor output)
-and tracked (orange, tracker output) obstacles — the primary visual debugging
-surface from Phase 3 on.
+Four relays overlay GT (green, ground truth), raw (grey, extractor output),
+tracked (orange, tracker output) and safe (red, gated+inflated — what DPCBF
+would eat) obstacles — the primary visual debugging surface from Phase 3 on.
 """
 import os
 
@@ -51,6 +51,17 @@ def generate_launch_description():
                          'cylinder_height': 1.2,
                          'color_r': 1.0, 'color_g': 0.55, 'color_b': 0.1,
                          'alpha': 0.6, 'show_ids': True}],
+        ),
+        Node(
+            package='g1_perception_utils',
+            executable='obstacles_marker_relay',
+            name='safe_obstacles_marker_relay',
+            output='screen',
+            parameters=[{'use_sim_time': use_sim_time,
+                         'topic': '/obstacles_safe',
+                         'cylinder_height': 1.5,
+                         'color_r': 0.9, 'color_g': 0.15, 'color_b': 0.15,
+                         'alpha': 0.35, 'show_ids': False}],
         ),
         Node(
             package='rviz2',

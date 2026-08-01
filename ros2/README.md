@@ -120,6 +120,23 @@ ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
   RPC and the new container stays empty. Stop launches with SIGINT and/or
   `pkill -f rclcpp_components/component_container` before relaunching in
   scripts.
+- **Scripted commands + DPCBF modes (Phase 4):** with `use_joystick: 0` the
+  stock bridge wires NO joystick, so the 1 kHz `axis_filter`/`Filter()` seam
+  never runs. Env `UNITREE_MUJOCO_SCRIPTED_COMMANDS=<profile>` installs a
+  ScriptedJoystick (sim-time "t lx ly rx" breakpoints, e.g.
+  `test_fixtures/t1_baseline/t1_command_profile.txt`).
+  `UNITREE_DPCBF_MODE=oracle|shadow|estimated` selects the ObstacleSource
+  mode (default oracle, D5); `UNITREE_DPCBF_FILTER_LOG=<path>` captures every
+  Filter() call (T1/T6 instrument; analyze with
+  `test/phase4_capture_stats.py`). Adapter diagnostics: `/dpcbf/status`
+  10 Hz (mode, staleness, GetObstacles latency histogram, shadow deltas).
+  The adapter node deliberately runs `use_sim_time=false` — it must not
+  consume the /clock its own process publishes; all safety ages are sim-time
+  `d->time` vs sim-time header stamps.
+- **When killing a live simulate in scripts, match `unitree_mujoc[o]`** — the
+  process cmdline is `./unitree_mujoco`, so path-qualified pkill patterns
+  miss it and a stray 1 kHz sim keeps publishing (doubled /dpcbf/status and
+  /clock are the tell; cost one shadow session in Phase 4).
 
 ## Gate tests (§16.2)
 
@@ -134,3 +151,7 @@ ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
 | T4 static accuracy + extractor integration | CTest `test_detection_static.launch_test.py` (fixture: `test_fixtures/s1_surveyed`) |
 | T5 dynamic tracking (0.5 / 0.8 m/s) | CTest `test_tracking_dynamic_{05,08}.launch_test.py` (fixtures: `test_fixtures/s2_cross_*`) |
 | T8 replay determinism (HARD, P-2 landed) | CTest `t8_replay_determinism` (script `test/test_t8_replay_determinism.py`; fixture: `s1_surveyed`) |
+| T1 oracle equivalence (Phase 4, HARD) | simulate CTest `t1_oracle_equivalence` in `simulate/build_ros2` (`ctest -R t1`; fixture: `test_fixtures/t1_baseline/`) |
+| T6 staleness drill (Phase 4) | `test/phase4_live_session.sh estimated 90 <out> t6` + `test/phase4_capture_stats.py t6 <capture>` |
+| §9.6 containment calibration | `test/phase4_containment.py` on `phase4_obstacles_dump.py` replays |
+| §17.3 offline A/B (one command) | `test/phase4_ab_run.sh <out>` (needs fixtures + `simulate/build_ros2/ab_eval`) |

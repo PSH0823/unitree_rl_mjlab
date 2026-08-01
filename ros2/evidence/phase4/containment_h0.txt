@@ -1,0 +1,16 @@
+s1: pairs=598 est_unmatched=0 F_req p50=-9.3mm p99=-9.0mm p99.9=-8.8mm max=-8.8mm
+s2_05: pairs=89 est_unmatched=0 F_req p50=-72.3mm p99=-67.6mm p99.9=-67.6mm max=-67.6mm
+s2_08: pairs=56 est_unmatched=0 F_req p50=-106.3mm p99=-99.3mm p99.9=-99.3mm max=-99.3mm
+s3: pairs=884 est_unmatched=32 F_req p50=-13.5mm p99=295.5mm p99.9=379.6mm max=379.6mm
+s4: pairs=219 est_unmatched=0 F_req p50=47.4mm p99=237.8mm p99.9=357.3mm max=357.3mm
+POOLED: pairs=1846 p99.9=363.93mm max=379.60mm
+F=  0mm pooled= 73.998%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 67.195%  s4= 13.242%
+F=  5mm pooled= 77.086%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 73.529%  s4= 13.699%
+F= 10mm pooled= 78.277%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 76.018%  s4= 13.699%
+F= 15mm pooled= 78.819%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 77.149%  s4= 13.699%
+F= 20mm pooled= 79.577%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 78.733%  s4= 13.699%
+F= 25mm pooled= 80.011%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 79.638%  s4= 13.699%
+F= 30mm pooled= 80.444%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 80.543%  s4= 13.699%
+F= 40mm pooled= 81.582%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 82.919%  s4= 13.699%
+F= 50mm pooled= 92.254%  s1=100.000%  s2_05=100.000%  s2_08=100.000%  s3= 85.068%  s4= 94.977%
+calibrated fixed_inflation (>= 99.9% pooled AND per-scenario): 379.6 mm  (horizon=0.0s)

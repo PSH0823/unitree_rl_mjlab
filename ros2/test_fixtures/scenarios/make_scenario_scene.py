@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-"""Scenario scene generator for S1/S2 fixtures (§17.1, Phase 3).
+"""Scenario scene generator for S1/S2 fixtures (§17.1, Phase 3) and the
+Phase-4 S3/S4 fixtures.
 
 Builds the G1 scene (scene_g1.xml, H-1 mid360_link site) plus four MOCAP
 cylinders (r=0.15, h=1.5 — the standard sim obstacle) and writes:
@@ -8,6 +9,24 @@ cylinders (r=0.15, h=1.5 — the standard sim obstacle) and writes:
   <out>/s1_static.json         scenario: 3 surveyed static cylinders
   <out>/s2_cross_05.json       scenario: single crosser at 0.5 m/s
   <out>/s2_cross_08.json       scenario: single crosser at 0.8 m/s
+
+Phase 4 adds (separate mirror — the S1/S2 bags recorded /sim/mj_state with
+nmocap=4 and the mirror validates lengths strictly, so the old mirror must
+stay byte-stable for old bags):
+
+  <out>/scenario_mirror_p4.xml mirror with 4 legacy + 20 swarm + 1 blocker
+                               mocap bodies (nmocap=25)
+  <out>/s3_swarm.json          S3: 20-obstacle seeded swarm, box-reflect
+                               motion (the DynamicObstacleManager model),
+                               radii seeded in [0.15, 0.28] m so the
+                               min_radius=0.20 clamp regime is exercised
+                               on BOTH sides (§9.6 calibration)
+  <out>/s4_occlusion.json      S4: static blocker r=0.30 at (2.0, 0) +
+                               crosser on x=3.2 at 0.6 m/s emerging from
+                               the blocker's shadow (occlusion ~2 s >
+                               tracking_duration 1.0 s: track dies and
+                               re-acquires — the extrapolation+staleness
+                               worst case the policy exists for)
 
 One mirror model serves every scenario: the scenario json tells
 scenario_state_source.py where each mocap cylinder is (or how it moves);
@@ -36,6 +55,7 @@ import argparse
 import json
 import math
 import os
+import random
 
 import mujoco
 import numpy as np
@@ -60,6 +80,25 @@ MOCAP_BODIES = [t[0] for t in S1_TARGETS] + ['s2_crosser']
 S2_LINE = {'x': 2.0, 'y0': -4.9, 'y1': 4.9}   # endpoints outside range_max
 S2_PREROLL_S = 1.0
 S2_TAIL_S = 1.0
+
+# ---- Phase 4 (S3/S4) ----
+S3_SEED = 20260801
+S3_COUNT = 20
+S3_RADIUS_RANGE = (0.15, 0.28)     # straddles the min_radius=0.20 clamp
+S3_SPEED_RANGE = (0.2, 0.8)        # all moving; arena max is 0.8 (§2.4)
+S3_BOX = {'x': [0.8, 7.0], 'y': [-4.0, 4.0]}   # robot at origin is outside
+S3_DURATION_S = 30.0
+S3_BODIES = ['s3_%02d' % i for i in range(S3_COUNT)]
+
+S4_BLOCKER = {'body': 's4_blocker', 'radius': 0.30, 'pos': [2.0, 0.0]}
+# Crosser INSIDE p_max (2.6 < 3.0 — containment during occlusion coasting is
+# safety-relevant only if DPCBF would consume the track, §2.3-2); shadow
+# half-width at x=2.6 is 0.30*2.6/2.0 = 0.39 m (+0.15 own radius) → occluded
+# ~1.8 s at 0.6 m/s > tracking_duration 1.0 s: the track dies mid-shadow and
+# re-acquires on emergence — the §10.3 worst case, on purpose.
+S4_LINE = {'x': 2.6, 'y0': -4.9, 'y1': 4.9}
+S4_SPEED = 0.6
+P4_MOCAP_BODIES = MOCAP_BODIES + S3_BODIES + [S4_BLOCKER['body']]
 
 
 def grounded_qpos(model):
@@ -96,33 +135,65 @@ def s1_positions():
     return out
 
 
+def build_mirror(scene, bodies_radii, out_xml):
+    """Compile scene + mocap cylinders (name -> radius) and write out_xml."""
+    spec = mujoco.MjSpec.from_file(scene)
+    spec.meshdir = os.path.join(os.path.dirname(os.path.abspath(scene)),
+                                spec.meshdir or 'assets')
+    for name, radius in bodies_radii:
+        body = spec.worldbody.add_body(name=name, mocap=True,
+                                       pos=[PARK[0], PARK[1], CYL_HALF_H])
+        body.add_geom(name=name + '_geom',
+                      type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+                      size=[radius, CYL_HALF_H, 0],
+                      rgba=[0.3, 0.3, 0.8, 1])
+    model = spec.compile()
+    assert model.nmocap == len(bodies_radii)
+    with open(out_xml, 'w') as f:
+        f.write(spec.to_xml())
+    check = mujoco.MjModel.from_xml_path(out_xml)
+    assert check.nq == model.nq and check.nmocap == len(bodies_radii)
+    return model
+
+
+def s3_obstacles(rng):
+    """Seeded swarm: radii, box-reflect trajectories, min 0.9 m apart at t=0
+    and >= 1.0 m from the origin (the robot stands there)."""
+    out = []
+    placed = []
+    for i, body in enumerate(S3_BODIES):
+        radius = round(rng.uniform(*S3_RADIUS_RANGE), 3)
+        while True:
+            p0 = [rng.uniform(*S3_BOX['x']), rng.uniform(*S3_BOX['y'])]
+            if p0[0] * p0[0] + p0[1] * p0[1] < 1.0:
+                continue
+            if all((p0[0] - q[0]) ** 2 + (p0[1] - q[1]) ** 2 >= 0.9 ** 2
+                   for q in placed):
+                break
+        placed.append(p0)
+        speed = rng.uniform(*S3_SPEED_RANGE)
+        heading = rng.uniform(0.0, 2.0 * math.pi)
+        out.append({
+            'body': body, 'mode': 'reflect', 'p0': p0,
+            'v0': [round(speed * math.cos(heading), 4),
+                   round(speed * math.sin(heading), 4)],
+            'box': S3_BOX, 't_start': 0.0, 'radius': radius,
+        })
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default='/tmp/scenarios_phase3')
     ap.add_argument('--scene', default=DEFAULT_SCENE)
     args = ap.parse_args()
 
-    spec = mujoco.MjSpec.from_file(args.scene)
-    spec.meshdir = os.path.join(os.path.dirname(os.path.abspath(args.scene)),
-                                spec.meshdir or 'assets')
-    for name in MOCAP_BODIES:
-        body = spec.worldbody.add_body(name=name, mocap=True,
-                                       pos=[PARK[0], PARK[1], CYL_HALF_H])
-        body.add_geom(name=name + '_geom',
-                      type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-                      size=[CYL_R, CYL_HALF_H, 0],
-                      rgba=[0.3, 0.3, 0.8, 1])
-    model = spec.compile()
-    assert model.nmocap == len(MOCAP_BODIES)
-
-    qpos = grounded_qpos(model)
-
     os.makedirs(args.out, exist_ok=True)
     xml_path = os.path.join(args.out, 'scenario_mirror.xml')
-    with open(xml_path, 'w') as f:
-        f.write(spec.to_xml())
-    check = mujoco.MjModel.from_xml_path(xml_path)
-    assert check.nq == model.nq and check.nmocap == len(MOCAP_BODIES)
+    model = build_mirror(args.scene, [(n, CYL_R) for n in MOCAP_BODIES],
+                         xml_path)
+
+    qpos = grounded_qpos(model)
 
     common = {
         'nq': int(model.nq),
@@ -160,8 +231,47 @@ def main():
     with open(os.path.join(args.out, 's1_static.json'), 'w') as f:
         json.dump(s1, f, indent=2)
 
+    # ---- Phase 4: S3/S4 on the extended mirror ----
+    rng = random.Random(S3_SEED)
+    s3_obs = s3_obstacles(rng)
+    p4_radii = ([(n, CYL_R) for n in MOCAP_BODIES] +
+                [(ob['body'], ob['radius']) for ob in s3_obs] +
+                [(S4_BLOCKER['body'], S4_BLOCKER['radius'])])
+    p4_xml = os.path.join(args.out, 'scenario_mirror_p4.xml')
+    p4_model = build_mirror(args.scene, p4_radii, p4_xml)
+    p4_qpos = grounded_qpos(p4_model)
+    p4_common = dict(common)
+    p4_common['nq'] = int(p4_model.nq)
+    p4_common['qpos'] = [float(v) for v in p4_qpos]
+    p4_common['mocap_bodies'] = P4_MOCAP_BODIES
+
+    s3 = dict(p4_common)
+    s3['name'] = 's3_swarm'
+    s3['duration_s'] = S3_DURATION_S
+    s3['seed'] = S3_SEED
+    s3['obstacles'] = s3_obs
+    with open(os.path.join(args.out, 's3_swarm.json'), 'w') as f:
+        json.dump(s3, f, indent=2)
+
+    s4 = dict(p4_common)
+    s4['name'] = 's4_occlusion'
+    cross_s = (S4_LINE['y1'] - S4_LINE['y0']) / S4_SPEED
+    s4['duration_s'] = S2_PREROLL_S + cross_s + S2_TAIL_S
+    s4['obstacles'] = [
+        {'body': S4_BLOCKER['body'], 'mode': 'static',
+         'pos': S4_BLOCKER['pos'], 'radius': S4_BLOCKER['radius']},
+        {'body': 's2_crosser', 'mode': 'cross',
+         'p0': [S4_LINE['x'], S4_LINE['y0']],
+         'p1': [S4_LINE['x'], S4_LINE['y1']],
+         'speed': S4_SPEED, 't_start': S2_PREROLL_S, 'radius': CYL_R},
+    ]
+    with open(os.path.join(args.out, 's4_occlusion.json'), 'w') as f:
+        json.dump(s4, f, indent=2)
+
     print(f'wrote {xml_path} (+ s1_static / s2_cross_05 / s2_cross_08 json)')
     print(f'nq={model.nq} nmocap={model.nmocap} pelvis_z={qpos[2]:.4f}')
+    print(f'wrote {p4_xml} (+ s3_swarm / s4_occlusion json)')
+    print(f'p4: nq={p4_model.nq} nmocap={p4_model.nmocap}')
 
 
 if __name__ == '__main__':

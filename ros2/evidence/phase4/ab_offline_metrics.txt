@@ -1,0 +1,31 @@
+s1: ticks=30000
+  cmd-tracking MSE  oracle=0.452732  estimated=0.518745  perf ratio est/orc=0.9565 (gate >=0.95)
+  oracle-vs-estimated cmd RMS diff=0.0772 m/s
+  degrade(scale<1) 0.04%  stop 0.04%
+  active constraints mean orc=2.00 est=1.99 max orc=2 est=2
+  unsolved ticks orc=0 est=0
+s2_05: ticks=21600
+  cmd-tracking MSE  oracle=0.409722  estimated=0.409722  perf ratio est/orc=1.0000 (gate >=0.95)
+  oracle-vs-estimated cmd RMS diff=0.0000 m/s
+  degrade(scale<1) 0.06%  stop 0.06%
+  active constraints mean orc=0.41 est=0.42 max orc=1 est=1
+  unsolved ticks orc=0 est=0
+s2_08: ticks=14250
+  cmd-tracking MSE  oracle=0.374737  estimated=0.377790  perf ratio est/orc=0.9978 (gate >=0.95)
+  oracle-vs-estimated cmd RMS diff=0.0104 m/s
+  degrade(scale<1) 0.08%  stop 0.08%
+  active constraints mean orc=0.39 est=0.40 max orc=1 est=1
+  unsolved ticks orc=0 est=0
+s3: ticks=30000
+  cmd-tracking MSE  oracle=0.577412  estimated=0.915479  perf ratio est/orc=0.8235 (gate >=0.95)
+  oracle-vs-estimated cmd RMS diff=0.3577 m/s
+  degrade(scale<1) 0.04%  stop 0.04%
+  active constraints mean orc=3.34 est=3.16 max orc=6 est=5
+  unsolved ticks orc=0 est=206
+s4: ticks=18333
+  cmd-tracking MSE  oracle=0.477908  estimated=0.562998  perf ratio est/orc=0.9456 (gate >=0.95)
+  oracle-vs-estimated cmd RMS diff=0.0795 m/s
+  degrade(scale<1) 0.07%  stop 0.07%
+  active constraints mean orc=1.27 est=1.20 max orc=2 est=2
+  unsolved ticks orc=0 est=0
+WORST perf ratio: 0.8235 (gate >= 0.95)

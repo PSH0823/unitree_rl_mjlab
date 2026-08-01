@@ -1,10 +1,19 @@
-# Safety gating & inflation (§9.6, H-8) — consumed in Phase 4. Appendix A verbatim.
+# Safety gating & inflation (§9.6, H-8). Appendix A verbatim EXCEPT
+# fixed_inflation, re-derived empirically in Phase 4 (the sanctioned §9.6
+# calibration; data in evidence/phase4/containment_*.txt and the §21 entry):
+# 0.051 m is the smallest value containing the measured steady-state errors
+# on S1–S4 — dominated by the extractor's circle-fit center bias on LARGE
+# cylinders (r_gt=0.30 blocker: 83 mm center bias + 33 mm radius over-
+# estimate → F_req max 51 mm; Appendix-A 0.03 was insufficient even there).
+# It deliberately does NOT cover occlusion-coast / merged-arc transients
+# (S3: 15% of pairs, S4 crosser coast: up to ~0.38 m) — a fixed term cannot;
+# that residual is the Q-2 verdict for P-3 covariance export (see §21).
 safety_obstacle_filter:
   ros__parameters:
     max_age: 0.30              # s
     min_radius: 0.20           # m
     max_circle_radius: 0.60    # m (spurious wall arcs)
-    fixed_inflation: 0.03      # m
+    fixed_inflation: 0.051     # m (Phase-4 calibrated; was Appendix-A 0.03)
     latency_horizon: 0.12      # s
     v_max_obstacle: 1.5        # m/s
     k_sigma: 2.748             # active only with P-3 covariance export

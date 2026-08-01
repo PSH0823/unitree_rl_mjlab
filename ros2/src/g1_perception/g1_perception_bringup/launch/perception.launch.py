@@ -4,7 +4,8 @@ source branches inside (D4).
 Phase 2: perception_container holds CropBox (self-filter, §9.3) +
 pointcloud_to_laserscan (projection, §9.4) with intra-process comms.
 Phase 3 adds obstacle_extractor + obstacle_tracker (§9.5, fork components via
-patch P-1). Phase 4 adds the safety_obstacle_filter.
+patch P-1). Phase 4 adds the safety_obstacle_filter (§9.6) — the container
+now holds the full chain to /obstacles_safe.
 
 VoxelGrid (§9.3 option) stays OFF by default: pass voxel:=on to insert it
 between CropBox and projection (leaf 0.05 m) if CPU ever requires it.
@@ -78,6 +79,16 @@ def generate_launch_description():
                     ('tracked_obstacles', '/tracked_obstacles')],
         extra_arguments=_INTRA,
     )
+    safety_filter = ComposableNode(
+        package='safety_obstacle_filter',
+        plugin='safety_obstacle_filter::SafetyObstacleFilterNode',
+        name='safety_obstacle_filter',
+        parameters=[os.path.join(_CONFIG, 'safety_obstacle_filter.yaml'),
+                    {'use_sim_time': use_sim_time}],
+        remappings=[('tracked_obstacles', '/tracked_obstacles'),
+                    ('obstacles_safe', '/obstacles_safe')],
+        extra_arguments=_INTRA,
+    )
     projection_from_voxel = ComposableNode(
         package='pointcloud_to_laserscan',
         plugin='pointcloud_to_laserscan::PointCloudToLaserScanNode',
@@ -101,7 +112,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{'use_sim_time': use_sim_time}],
             composable_node_descriptions=[crop_box, projection,
-                                          extractor, tracker],
+                                          extractor, tracker,
+                                          safety_filter],
             condition=LaunchConfigurationEquals('voxel', 'off'),
         ),
         ComposableNodeContainer(
@@ -113,7 +125,8 @@ def generate_launch_description():
             parameters=[{'use_sim_time': use_sim_time}],
             composable_node_descriptions=[crop_box, voxel_grid,
                                           projection_from_voxel,
-                                          extractor, tracker],
+                                          extractor, tracker,
+                                          safety_filter],
             condition=LaunchConfigurationEquals('voxel', 'on'),
         ),
     ])

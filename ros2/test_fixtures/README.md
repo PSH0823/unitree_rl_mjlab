@@ -54,6 +54,33 @@ Regenerate all three (workspace built & sourced):
 #  discipline between runs — see ros2/README.md runtime notes)
 ```
 
+## s3_swarm (Phase 4, 2026-08-01)
+
+§17.1 S3: 20-obstacle seeded swarm (seed 20260801), radii ∈ [0.15, 0.28]
+(straddles the min_radius 0.20 clamp), box-reflect motion at 0.2–0.8 m/s in
+x∈[0.8,7], y∈[−4,4] — the DynamicObstacleManager motion model in scripted
+form. Mirror: `scenario_mirror_p4.xml` (nmocap=25 — the S1/S2 mirror stays
+untouched because those bags pin nmocap=4). 33 s, 87.5 MiB, md5(db3)
+`5f0e98e3b943df8de555dab05caff8c0`.
+
+## s4_occlusion (Phase 4, 2026-08-01)
+
+§17.1 S4: static blocker r=0.30 at (2.0, 0) + crosser on x=2.6 at 0.6 m/s —
+INSIDE p_max (first cut used x=3.2; DPCBF culls at 3.0 m, so occlusion
+containment there had no safety meaning). Shadow occludes the crosser
+~1.8 s > tracking_duration 1.0 s: the track dies mid-shadow and re-acquires
+on emergence (the §10.3 worst case, on purpose). 21.4 s, 51.5 MiB, md5(db3)
+`83b2311fa4581789b3c88cb4f13ef383`.
+
+Regenerate S3/S4: same recipe as above with
+`mirror_model_path:=/tmp/scenarios_phase3/scenario_mirror_p4.xml` and the
+s3_swarm / s4_occlusion jsons.
+
+## t1_baseline (Phase 4, 2026-08-01) — see t1_baseline/README.md
+
+Gate-T1 pre-refactor Filter-I/O capture (patch + profile committed, capture
+gitignored; md5 `e4a5caef830ce24cd05280467ac629a7`).
+
 ## wall_scene (Phase 2, 2026-08-01) — COMMITTED
 
 Measured-wall validation fixture (generator + GT, no binary payload): see
