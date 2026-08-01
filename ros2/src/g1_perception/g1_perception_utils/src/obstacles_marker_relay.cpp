@@ -1,5 +1,6 @@
 // obstacle_detector/Obstacles -> visualization_msgs/MarkerArray for RViz and
-// Foxglove (§6.3, §14.4). Circles become cylinders; velocities become arrows.
+// Foxglove (§6.3, §14.4). Circles become cylinders; velocities become arrows;
+// track uids become text labels (uid = 0 on sources that don't assign ids).
 #include <memory>
 #include <string>
 
@@ -16,6 +17,7 @@ class ObstaclesMarkerRelay : public rclcpp::Node {
     color_g_ = declare_parameter<double>("color_g", 0.3);
     color_b_ = declare_parameter<double>("color_b", 0.1);
     alpha_ = declare_parameter<double>("alpha", 0.6);
+    show_ids_ = declare_parameter<bool>("show_ids", true);
 
     pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
         std::string(get_name()) + "/markers", rclcpp::QoS(1));
@@ -77,11 +79,32 @@ class ObstaclesMarkerRelay : public rclcpp::Node {
         a.color.a = 0.9;
         out.markers.push_back(a);
       }
+
+      if (show_ids_) {
+        visualization_msgs::msg::Marker t;
+        t.header = msg.header;
+        t.ns = "ids";
+        t.id = id++;
+        t.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+        t.action = visualization_msgs::msg::Marker::ADD;
+        t.text = std::to_string(c.uid);
+        t.pose.position.x = c.center.x;
+        t.pose.position.y = c.center.y;
+        t.pose.position.z = height_ + 0.25;
+        t.pose.orientation.w = 1.0;
+        t.scale.z = 0.25;
+        t.color.r = 1.0;
+        t.color.g = 1.0;
+        t.color.b = 1.0;
+        t.color.a = 1.0;
+        out.markers.push_back(t);
+      }
     }
     pub_->publish(out);
   }
 
   double height_, color_r_, color_g_, color_b_, alpha_;
+  bool show_ids_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_;
   rclcpp::Subscription<obstacle_detector::msg::Obstacles>::SharedPtr sub_;
 };

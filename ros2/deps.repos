@@ -14,7 +14,8 @@
 #                           Header-only: install = copy cpp/include/unitree into prefix.
 #   rmw_cyclonedds          humble
 #   pointcloud_to_laserscan humble
-#   obstacle_detector_2     humble-devel  (fork target — see §5.3; org fork pending)
+#   obstacle_detector_2     humble-devel  (fork target — see §5.3; org fork pending;
+#                           recorded patches 0003 (P-1) + 0004 (P-2), Phase 3)
 #   MuJoCo-LiDAR            main          (python; installed via PYTHONPATH, not colcon)
 #   perception_pcl          tag 2.6.1 — Phase-2 addition. Rationale: the Humble
 #                           BINARY pcl_ros (2.4.5) ships NO filter components

@@ -1,16 +1,22 @@
-# Self-filter stage (§9.3) — pcl_ros::CropBox, consumed from Phase 2.
-# Appendix A / §9.3 values verbatim; box is in the CLOUD frame (mid360_link —
-# input_frame stays empty so no TF is involved at this stage). negative=true
-# removes everything INSIDE the box (robot body returns). Real tuning waits
-# for Phase 5 hardware self-hit data.
+# Self-filter stage (§9.3) — pcl_ros::CropBox. Box is in the CLOUD frame
+# (mid360_link — input_frame stays empty so no TF is involved at this stage).
+# negative=true removes everything INSIDE the box (robot body returns).
+#
+# RECORDED SIM-INTERIM DEVIATION from Appendix A (Phase 3, §21 log):
+# xy ±0.35 → ±0.40 and max_z 0.25 → 0.45 so the box covers the wrist links
+# in the grounded/standing pose (returns at 0.29–0.36 m horizontal,
+# 0.34–0.41 m below the sensor — the Phase-2 finding). Without this the two
+# wrist clusters merge into a persistent phantom circle (true_radius ≈ 0.41)
+# at 0.29 m inside p_max. Real retune stays owned by Phase 5 with hardware
+# self-hit data.
 crop_box_self_filter:
   ros__parameters:
-    min_x: -0.35
-    max_x: 0.35
-    min_y: -0.35
-    max_y: 0.35
+    min_x: -0.40
+    max_x: 0.40
+    min_y: -0.40
+    max_y: 0.40
     min_z: -0.55
-    max_z: 0.25
+    max_z: 0.45
     negative: true
     keep_organized: false
     input_frame: ''

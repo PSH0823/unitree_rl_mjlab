@@ -1,4 +1,9 @@
-"""RViz2 + GT-obstacle marker relay (§14.4)."""
+"""RViz2 + obstacle marker relays (§14.4).
+
+Three relays overlay GT (green, ground truth), raw (grey, extractor output)
+and tracked (orange, tracker output) obstacles — the primary visual debugging
+surface from Phase 3 on.
+"""
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -21,7 +26,31 @@ def generate_launch_description():
             name='gt_obstacles_marker_relay',
             output='screen',
             parameters=[{'use_sim_time': use_sim_time,
-                         'topic': LaunchConfiguration('obstacles_topic')}],
+                         'topic': LaunchConfiguration('obstacles_topic'),
+                         'color_r': 0.2, 'color_g': 0.8, 'color_b': 0.2,
+                         'alpha': 0.35, 'show_ids': True}],
+        ),
+        Node(
+            package='g1_perception_utils',
+            executable='obstacles_marker_relay',
+            name='raw_obstacles_marker_relay',
+            output='screen',
+            parameters=[{'use_sim_time': use_sim_time,
+                         'topic': '/raw_obstacles',
+                         'cylinder_height': 0.8,
+                         'color_r': 0.6, 'color_g': 0.6, 'color_b': 0.6,
+                         'alpha': 0.5, 'show_ids': False}],
+        ),
+        Node(
+            package='g1_perception_utils',
+            executable='obstacles_marker_relay',
+            name='tracked_obstacles_marker_relay',
+            output='screen',
+            parameters=[{'use_sim_time': use_sim_time,
+                         'topic': '/tracked_obstacles',
+                         'cylinder_height': 1.2,
+                         'color_r': 1.0, 'color_g': 0.55, 'color_b': 0.1,
+                         'alpha': 0.6, 'show_ids': True}],
         ),
         Node(
             package='rviz2',

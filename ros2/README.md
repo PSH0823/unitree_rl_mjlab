@@ -32,6 +32,15 @@ workspace instead: `cyclonedds` 0.10.2, `cyclonedds-cxx` 0.10.2,
 `pcl_ros` 2.6.1 (Phase 2 — the Humble BINARY pcl_ros 2.4.5 ships **no**
 filter components at all, so the CropBox stage is impossible without this
 pin; patch 0002 makes its output publisher SensorData per §7.1). The
+`obstacle_detector_2` fork carries two recorded patches (Phase 3):
+0003 (P-1: composable-node components, SensorData `/scan` subscription —
+upstream's Reliable one never matches a best-effort laser publisher —
+publishers at §7.1 depth 5, TF lookup at the scan stamp, and an upstream
+grouping bug fix: `begin()++` double-counted the first scan point of every
+first group, corrupting its circle fit) and 0004 (P-2: measurement-driven
+tracker — predict+correct on arrival with dt from header stamps, no wall
+timer, measurement-stamped output, two-point track initiation with matching
+init covariance, radius-residual weight 0.3). The
 Unitree side (`unitree_sdk2`, C++ `unitree_dds_wrapper` headers) was **never
 installed on this machine** (the doc's `/opt/unitree_robotics` does not
 exist); both are pinned in `deps.repos` and built here too. Side effect: the
@@ -122,3 +131,6 @@ ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
 | T3 pattern envelope | `src/g1_perception/sim_mjlidar_bridge/test_gates/t3_pattern_envelope.py` |
 | Phase-2 measured wall (±2 cm) + T9 | CTest `test_wall_accuracy.launch_test.py` (self-contained; fixture: `test_fixtures/wall_scene/`) |
 | Phase-2 replay integration + T9 | CTest `test_projection_replay.launch_test.py` (needs the gitignored fixture bag) |
+| T4 static accuracy + extractor integration | CTest `test_detection_static.launch_test.py` (fixture: `test_fixtures/s1_surveyed`) |
+| T5 dynamic tracking (0.5 / 0.8 m/s) | CTest `test_tracking_dynamic_{05,08}.launch_test.py` (fixtures: `test_fixtures/s2_cross_*`) |
+| T8 replay determinism (HARD, P-2 landed) | CTest `t8_replay_determinism` (script `test/test_t8_replay_determinism.py`; fixture: `s1_surveyed`) |

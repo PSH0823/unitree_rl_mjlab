@@ -35,6 +35,18 @@ Visualization Manager:
       Topic:
         Value: /gt_obstacles_marker_relay/markers
         Depth: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: RawObstacles (Phase 3)
+      Topic:
+        Value: /raw_obstacles_marker_relay/markers
+        Depth: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: TrackedObstacles (Phase 3)
+      Topic:
+        Value: /tracked_obstacles_marker_relay/markers
+        Depth: 1
     - Class: rviz_default_plugins/Odometry
       Enabled: true
       Name: Odom

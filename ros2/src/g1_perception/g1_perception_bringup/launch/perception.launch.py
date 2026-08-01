@@ -3,7 +3,8 @@ source branches inside (D4).
 
 Phase 2: perception_container holds CropBox (self-filter, §9.3) +
 pointcloud_to_laserscan (projection, §9.4) with intra-process comms.
-Phase 3 adds the obstacle_detector fork, Phase 4 the safety_obstacle_filter.
+Phase 3 adds obstacle_extractor + obstacle_tracker (§9.5, fork components via
+patch P-1). Phase 4 adds the safety_obstacle_filter.
 
 VoxelGrid (§9.3 option) stays OFF by default: pass voxel:=on to insert it
 between CropBox and projection (leaf 0.05 m) if CPU ever requires it.
@@ -55,6 +56,28 @@ def generate_launch_description():
                     ('scan', '/scan')],
         extra_arguments=_INTRA,
     )
+    # §9.5 detection & tracking (fork components, patch P-1). Extractor output
+    # and tracker output are odom-frame per §7.1; params are Appendix A.
+    extractor = ComposableNode(
+        package='obstacle_detector',
+        plugin='obstacle_detector::ObstacleExtractorComponent',
+        name='obstacle_extractor',
+        parameters=[os.path.join(_CONFIG, 'obstacle_detector.yaml'),
+                    {'use_sim_time': use_sim_time}],
+        remappings=[('scan', '/scan'),
+                    ('raw_obstacles', '/raw_obstacles')],
+        extra_arguments=_INTRA,
+    )
+    tracker = ComposableNode(
+        package='obstacle_detector',
+        plugin='obstacle_detector::ObstacleTrackerComponent',
+        name='obstacle_tracker',
+        parameters=[os.path.join(_CONFIG, 'obstacle_detector.yaml'),
+                    {'use_sim_time': use_sim_time}],
+        remappings=[('raw_obstacles', '/raw_obstacles'),
+                    ('tracked_obstacles', '/tracked_obstacles')],
+        extra_arguments=_INTRA,
+    )
     projection_from_voxel = ComposableNode(
         package='pointcloud_to_laserscan',
         plugin='pointcloud_to_laserscan::PointCloudToLaserScanNode',
@@ -77,7 +100,8 @@ def generate_launch_description():
             executable='component_container',
             output='screen',
             parameters=[{'use_sim_time': use_sim_time}],
-            composable_node_descriptions=[crop_box, projection],
+            composable_node_descriptions=[crop_box, projection,
+                                          extractor, tracker],
             condition=LaunchConfigurationEquals('voxel', 'off'),
         ),
         ComposableNodeContainer(
@@ -88,7 +112,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{'use_sim_time': use_sim_time}],
             composable_node_descriptions=[crop_box, voxel_grid,
-                                          projection_from_voxel],
+                                          projection_from_voxel,
+                                          extractor, tracker],
             condition=LaunchConfigurationEquals('voxel', 'on'),
         ),
     ])

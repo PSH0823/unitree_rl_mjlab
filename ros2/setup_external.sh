@@ -23,4 +23,21 @@ git -C src/external/perception_pcl apply --check ../../../patches/0002-pcl-ros-f
 git -C src/external/unitree_dds_wrapper apply --check ../../../patches/0001-unitree-dds-wrapper-restore-sim-joystick-api.patch 2>/dev/null \
   && git -C src/external/unitree_dds_wrapper apply ../../../patches/0001-unitree-dds-wrapper-restore-sim-joystick-api.patch \
   || echo "dds_wrapper patch already applied"
+# P-1 (§9.5): componentization (upstream ships plain executables only), scan
+# subscription QoS SensorData (upstream Reliable never matches a best-effort
+# laser publisher), obstacle publishers Reliable depth 5 (§7.1), and TF lookup
+# at the scan stamp instead of latest (odom-frame consistency + replay
+# determinism). Upstream-able; PR with the org-fork follow-up.
+git -C src/external/obstacle_detector_2 apply --check ../../../patches/0003-obstacle-detector-p1-components-qos-stamped-tf.patch 2>/dev/null \
+  && git -C src/external/obstacle_detector_2 apply ../../../patches/0003-obstacle-detector-p1-components-qos-stamped-tf.patch \
+  || echo "obstacle_detector P-1 patch already applied"
+# P-2 (§9.5, fired by the Phase-3 decision rule — T8 nondeterministic and T5
+# velocity RMSE over gate with the shipped timer model): measurement-driven
+# tracker — predict + correct on raw_obstacles arrival with dt from header
+# stamps, no wall timer, output stamped with the measurement time. Also the
+# Appendix-A P-2 scope items: radius-residual weight 0.3 in the association
+# cost; covariances interpreted per-step at sensor_rate, scaled with dt.
+git -C src/external/obstacle_detector_2 apply --check ../../../patches/0004-obstacle-detector-p2-measurement-driven-tracker.patch 2>/dev/null \
+  && git -C src/external/obstacle_detector_2 apply ../../../patches/0004-obstacle-detector-p2-measurement-driven-tracker.patch \
+  || echo "obstacle_detector P-2 patch already applied"
 echo "External sources ready."

@@ -9,4 +9,5 @@ log/
 test_fixtures/*
 !test_fixtures/README.md
 !test_fixtures/wall_scene/
+!test_fixtures/scenarios/
 __pycache__/

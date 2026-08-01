@@ -21,9 +21,14 @@ obstacle_extractor:
 obstacle_tracker:
   ros__parameters:
     active: true
-    loop_rate: 20.0                   # 2x scan rate (H-6 compromise; P-2 pending)
+    sensor_rate: 10.0                 # /scan rate; association cost + promotion catch-up
+    compensate_robot_velocity: false  # input is odom-frame (extractor transforms);
+                                      # compensation assumes robot-frame input — keep off
+    loop_rate: 20.0                   # inert since P-2 (measurement-driven tracker);
+                                      # kept for upstream compatibility
     tracking_duration: 1.0
-    min_correspondence_cost: 0.3
+    min_correspondence_cost: 0.3      # association gate 0.30 m
+    radius_residual_weight: 0.3       # Appendix-A P-2 scope
     std_correspondence_dev: 0.15
     process_variance: 0.0001
     process_rate_variance: 0.03
