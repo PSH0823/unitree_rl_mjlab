@@ -1,0 +1,17 @@
+# Self-filter stage (§9.3) — pcl_ros::CropBox, consumed from Phase 2.
+# Appendix A / §9.3 values verbatim; box is in the CLOUD frame (mid360_link —
+# input_frame stays empty so no TF is involved at this stage). negative=true
+# removes everything INSIDE the box (robot body returns). Real tuning waits
+# for Phase 5 hardware self-hit data.
+crop_box_self_filter:
+  ros__parameters:
+    min_x: -0.35
+    max_x: 0.35
+    min_y: -0.35
+    max_y: 0.35
+    min_z: -0.55
+    max_z: 0.25
+    negative: true
+    keep_organized: false
+    input_frame: ''
+    output_frame: ''

@@ -1,0 +1,16 @@
+diff --git a/pcl_ros/src/pcl_ros/filters/filter.cpp b/pcl_ros/src/pcl_ros/filters/filter.cpp
+index a53b820..2ea8e58 100644
+--- a/pcl_ros/src/pcl_ros/filters/filter.cpp
++++ b/pcl_ros/src/pcl_ros/filters/filter.cpp
+@@ -171,7 +171,10 @@ pcl_ros::Filter::unsubscribe()
+ pcl_ros::Filter::Filter(std::string node_name, const rclcpp::NodeOptions & options)
+ : PCLNode(node_name, options)
+ {
+-  pub_output_ = create_publisher<PointCloud2>("output", max_queue_size_);
++  // §7.1 QoS contract (DPCBF perception): sensor-stream topics are SensorData
++  // (best-effort). Upstream publishes "output" Reliable; recorded patch 0002.
++  pub_output_ = create_publisher<PointCloud2>(
++    "output", rclcpp::SensorDataQoS().keep_last(max_queue_size_));
+   RCLCPP_DEBUG(this->get_logger(), "Node successfully created.");
+ }
+ 

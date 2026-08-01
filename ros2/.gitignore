@@ -4,4 +4,9 @@ src/external/
 build/
 install/
 log/
-test_fixtures/
+# bags are big — regenerate per test_fixtures/README.md; the wall_scene
+# fixture (generator + README, outputs go to /tmp) IS committed (Phase 2)
+test_fixtures/*
+!test_fixtures/README.md
+!test_fixtures/wall_scene/
+__pycache__/

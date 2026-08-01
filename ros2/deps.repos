@@ -16,6 +16,16 @@
 #   pointcloud_to_laserscan humble
 #   obstacle_detector_2     humble-devel  (fork target — see §5.3; org fork pending)
 #   MuJoCo-LiDAR            main          (python; installed via PYTHONPATH, not colcon)
+#   perception_pcl          tag 2.6.1 — Phase-2 addition. Rationale: the Humble
+#                           BINARY pcl_ros (2.4.5) ships NO filter components
+#                           (only pcd_to_pointcloud + stale ROS1 nodelet XMLs);
+#                           the ROS2 CropBox port (PR #401) first SHIPS
+#                           componentized in 2.6.1 (2.5.x still has it commented
+#                           out of CMake). 2.6.1 builds clean on Humble
+#                           (message_filters .h includes). Only pcl_ros is built
+#                           (pcl_conversions stays the Humble binary; metapackage
+#                           COLCON_IGNOREd). Patch 0002 makes the filter output
+#                           publisher SensorDataQoS per §7.1.
 repositories:
   external/cyclonedds:
     type: git
@@ -49,6 +59,10 @@ repositories:
     type: git
     url: https://github.com/TATP-233/MuJoCo-LiDAR.git
     version: 287b50122ac5188e42ec492484965335a6a55bef
+  external/perception_pcl:
+    type: git
+    url: https://github.com/ros-perception/perception_pcl.git
+    version: 9d078ebf1dffa9723bb4c6e98654e6049c4d366f
 # ---------------------------------------------------------------------------
 # Reserved for later phases (SHAs resolved 2026-08-01, not imported yet):
 #   external/direct_lidar_inertial_odometry:   # Phase 5, LIO primary (§5.7)

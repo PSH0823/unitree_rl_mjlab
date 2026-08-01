@@ -28,7 +28,10 @@ ever run under the conda interpreter.
 `sudo` needs a password and apt is unusable non-interactively, so packages the
 architecture assumed as apt binaries are **built from pinned source** in this
 workspace instead: `cyclonedds` 0.10.2, `cyclonedds-cxx` 0.10.2,
-`rmw_cyclonedds_cpp` (humble), `pointcloud_to_laserscan` (humble). The
+`rmw_cyclonedds_cpp` (humble), `pointcloud_to_laserscan` (humble), and
+`pcl_ros` 2.6.1 (Phase 2 — the Humble BINARY pcl_ros 2.4.5 ships **no**
+filter components at all, so the CropBox stage is impossible without this
+pin; patch 0002 makes its output publisher SensorData per §7.1). The
 Unitree side (`unitree_sdk2`, C++ `unitree_dds_wrapper` headers) was **never
 installed on this machine** (the doc's `/opt/unitree_robotics` does not
 exist); both are pinned in `deps.repos` and built here too. Side effect: the
@@ -96,6 +99,18 @@ ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
 - The sidecar mirrors `/tmp/unitree_mujoco_mirror_model.xml` (override:
   `UNITREE_MUJOCO_MIRROR_XML`), dumped by simulate at model load — never the
   raw scene, which lacks the runtime-added obstacle mocap bodies.
+- **Live-path processes must export the lo-pinned `CYCLONEDDS_URI`** (Phase 2):
+  simulate derives it internally from config.yaml, so its topics live on `lo`
+  — any launch/CLI/probe started WITHOUT the same URI binds the default NIC
+  and sees the topic names via discovery but **no data**. Use:
+  `CYCLONEDDS_URI='<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="lo"/></Interfaces></General><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>'`
+  (Bag-replay-only sessions work without it because every endpoint then
+  shares the default interface.)
+- **SIGTERM on `ros2 launch` orphans composable containers** (Phase 2): the
+  stale `/perception_container` twin then races the next launch's LoadNode
+  RPC and the new container stays empty. Stop launches with SIGINT and/or
+  `pkill -f rclcpp_components/component_container` before relaunching in
+  scripts.
 
 ## Gate tests (§16.2)
 
@@ -105,3 +120,5 @@ ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
 | T7 extrinsic guard | `colcon test --packages-select g1_description` (CTest `t7_extrinsic_guard`) |
 | T2 wall occlusion | `src/g1_perception/sim_mjlidar_bridge/test_gates/t2_wall_occlusion.py` |
 | T3 pattern envelope | `src/g1_perception/sim_mjlidar_bridge/test_gates/t3_pattern_envelope.py` |
+| Phase-2 measured wall (±2 cm) + T9 | CTest `test_wall_accuracy.launch_test.py` (self-contained; fixture: `test_fixtures/wall_scene/`) |
+| Phase-2 replay integration + T9 | CTest `test_projection_replay.launch_test.py` (needs the gitignored fixture bag) |
