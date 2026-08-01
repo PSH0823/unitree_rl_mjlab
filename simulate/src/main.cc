@@ -40,9 +40,23 @@
 #include "dpcbf/dynamic_obstacles.h"
 #include "dpcbf/dpcbf_safety_filter.h"
 #include "dpcbf/dpcbf_visualizer.h"
+// Phase-4 seam (§10): the axes<->command mapping moved verbatim into the
+// adapter package so the T1 replay harness compiles the exact same code;
+// filter_io_log is the H-10 capture instrument (env UNITREE_DPCBF_FILTER_LOG).
+// Both headers are rclcpp-free; ObstacleSource itself links rclcpp and is
+// only used in the ROS2 build.
+#include "dpcbf_ros_adapter/dpcbf_seam.h"
+#include "dpcbf_ros_adapter/filter_io_log.h"
+// Header is rclcpp-free; the OFF build uses only the Mode enum (no
+// ObstacleSource is constructed, so nothing links against the adapter lib).
+#include "dpcbf_ros_adapter/obstacle_source.h"
 #ifdef UNITREE_MUJOCO_WITH_ROS2
 #include "ros2_bridge.h"
 #endif
+
+#include <fstream>
+#include <sstream>
+#include <vector>
 
 #define MUJOCO_PLUGIN_DIR "mujoco_plugin"
 #define NUM_MOTOR_IDL_GO 20
@@ -118,20 +132,8 @@ namespace
 
   using Seconds = std::chrono::duration<double>;
 
-  double AxisToCommand(double axis, double minimum, double maximum)
-  {
-    const double normalized = std::clamp(axis, -1.0, 1.0);
-    return normalized >= 0.0 ? normalized * maximum : -normalized * minimum;
-  }
-
-  float CommandToAxis(double command, double minimum, double maximum)
-  {
-    if (command >= 0.0)
-    {
-      return static_cast<float>(maximum > 0.0 ? command / maximum : 0.0);
-    }
-    return static_cast<float>(minimum < 0.0 ? -command / minimum : 0.0);
-  }
+  // AxisToCommand / CommandToAxis moved verbatim to
+  // dpcbf_ros_adapter/axis_command_map.h (shared with the T1 replay harness).
 
   dpcbf::RobotState ReadRobotGroundTruth(const mjModel* model, const mjData* data,
                                          int body_id)
@@ -609,6 +611,77 @@ namespace
       } // release std::lock_guard<std::mutex>
     }
   }
+  // Scripted command injection (Phase-4 §0): this machine has no gamepad, so
+  // with use_joystick=0 the stock bridge never wires a joystick and the
+  // 1 kHz axis_filter/Filter() seam is DEAD CODE. A ScriptedJoystick plays a
+  // deterministic sim-time axis profile ("t lx ly rx" lines, piecewise-
+  // constant hold) through the exact same joystick->update() path. Test-only
+  // flag: enabled solely by env UNITREE_MUJOCO_SCRIPTED_COMMANDS=<profile>;
+  // tracked config untouched; inert when the variable is unset.
+  class ScriptedJoystick : public unitree::common::UnitreeJoystick
+  {
+  public:
+    ScriptedJoystick(const std::string& profile_path,
+                     JoystickAxisFilter axis_filter)
+        : axis_filter_(std::move(axis_filter))
+    {
+      std::ifstream in(profile_path);
+      if (!in)
+      {
+        std::cerr << "ScriptedJoystick: cannot open profile " << profile_path
+                  << std::endl;
+        exit(1);
+      }
+      std::string line;
+      while (std::getline(in, line))
+      {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream ss(line);
+        Point p{};
+        if (ss >> p.t >> p.lx >> p.ly >> p.rx) points_.push_back(p);
+      }
+      std::cout << "ScriptedJoystick: " << points_.size()
+                << " breakpoints from " << profile_path << std::endl;
+      if (axis_filter_)
+      {
+        // Same rule as the device joysticks: never low-pass blend a newly
+        // safe command with an older command.
+        lx.smooth = 1.0f;
+        ly.smooth = 1.0f;
+        rx.smooth = 1.0f;
+      }
+    }
+
+    void update() override
+    {
+      // Sim-time sampled lock-free — same pre-existing benign-race class as
+      // the bridge's own mjData reads (R-9, not worsened).
+      const double t = d ? d->time : 0.0;
+      std::array<float, 3> axes{0.0f, 0.0f, 0.0f};
+      for (const auto& p : points_)
+      {
+        if (p.t > t) break;
+        axes = {p.lx, p.ly, p.rx};
+      }
+      if (axis_filter_) axes = axis_filter_(axes[0], axes[1], axes[2]);
+      lx(axes[0]);
+      ly(axes[1]);
+      rx(axes[2]);
+      ry(0.0f);
+    }
+
+  private:
+    struct Point
+    {
+      double t;
+      float lx, ly, rx;
+    };
+    std::vector<Point> points_;
+    JoystickAxisFilter axis_filter_;
+  };
+
+  // T1/T6 capture instrument (H-10): binary log of every Filter() call.
+  std::unique_ptr<dpcbf_ros_adapter::FilterIoWriter> filter_io_log;
 } // namespace
 
 //-------------------------------------- physics_thread --------------------------------------------
@@ -695,15 +768,13 @@ void *UnitreeSdk2BridgeThread(void *arg)
     return nullptr;
   }
 
-  JoystickAxisFilter axis_filter = [dpcbf_body_id](float lx, float ly, float rx) {
-    dpcbf::VelocityCommand desired;
-    desired.sagittal = AxisToCommand(ly, safety_filter.sagittal_velocity_min(),
-                                     safety_filter.sagittal_velocity_max());
-    desired.lateral = AxisToCommand(-lx, safety_filter.lateral_velocity_min(),
-                                    safety_filter.lateral_velocity_max());
-    desired.yaw_rate = AxisToCommand(-rx, safety_filter.yaw_rate_min(),
-                                     safety_filter.yaw_rate_max());
+  namespace dra = dpcbf_ros_adapter;
+  const auto seam_limits = dra::SeamLimits::FromFilter(safety_filter);
 
+  // The verbatim baseline obstacle acquisition (§10.4 kOracle): snapshot the
+  // ground-truth manager and convert index-as-id. This exact loop is what
+  // the pre-refactor lambda inlined; it is now the oracle provider.
+  const auto oracle_provider = [] {
     std::vector<dpcbf::ObstacleState> obstacle_states;
     const auto obstacle_snapshot = dynamic_obstacles.Snapshot();
     obstacle_states.reserve(obstacle_snapshot.size());
@@ -714,26 +785,160 @@ void *UnitreeSdk2BridgeThread(void *arg)
                                  obstacle.velocity[0], obstacle.velocity[1],
                                  static_cast<int>(obstacle_id)});
     }
+    return obstacle_states;
+  };
+
+  // Mode selection (launch-selectable via env; DEFAULT REMAINS ORACLE, D5).
+  auto mode = dra::ObstacleSource::Mode::kOracle;
+  if (const char* mode_env = std::getenv("UNITREE_DPCBF_MODE")) {
+    const std::string mode_str = mode_env;
+    if (mode_str == "oracle") {
+      mode = dra::ObstacleSource::Mode::kOracle;
+    } else if (mode_str == "shadow") {
+      mode = dra::ObstacleSource::Mode::kShadow;
+    } else if (mode_str == "estimated") {
+      mode = dra::ObstacleSource::Mode::kEstimated;
+    } else {
+      std::cerr << "UNITREE_DPCBF_MODE must be oracle|shadow|estimated, got "
+                << mode_str << std::endl;
+      return nullptr;
+    }
+  }
+#ifndef UNITREE_MUJOCO_WITH_ROS2
+  if (mode != dra::ObstacleSource::Mode::kOracle) {
+    std::cerr << "shadow/estimated modes require the ROS2 build "
+                 "(-DUNITREE_MUJOCO_WITH_ROS2=ON)" << std::endl;
+    return nullptr;
+  }
+#endif
+  if (const char* log_path = std::getenv("UNITREE_DPCBF_FILTER_LOG")) {
+    filter_io_log = std::make_unique<dra::FilterIoWriter>(
+        log_path, m->opt.timestep, static_cast<std::uint32_t>(mode));
+    std::cout << "Filter I/O capture -> " << log_path << std::endl;
+  }
+
+#ifdef UNITREE_MUJOCO_WITH_ROS2
+  // The seam behind ObstacleSource (§10.5). Constructed after SimRos2Bridge
+  // so rclcpp is already initialized (T10 order). Appendix-A staleness
+  // defaults; /obstacles_safe topic; /dpcbf/status diagnostics at 10 Hz.
+  // The adapter node runs use_sim_time=false — it must never consume the
+  // /clock this process publishes (§11.2 decision); every safety age is
+  // sim-time t_query vs sim-time header stamps.
+  static std::unique_ptr<dra::ObstacleSource> obstacle_source;
+  {
+    dra::ObstacleSource::Config source_config;
+    source_config.mode = mode;
+    source_config.oracle = oracle_provider;
+    obstacle_source = std::make_unique<dra::ObstacleSource>(source_config);
+  }
+  std::cout << "DPCBF obstacle source mode: "
+            << (mode == dra::ObstacleSource::Mode::kOracle ? "oracle"
+                : mode == dra::ObstacleSource::Mode::kShadow ? "shadow"
+                                                             : "estimated")
+            << std::endl;
+
+  JoystickAxisFilter axis_filter = [dpcbf_body_id, seam_limits](
+                                       float lx, float ly, float rx) {
+    const dpcbf::RobotState robot = ReadRobotGroundTruth(m, d, dpcbf_body_id);
+    obstacle_source->SetRobotXY(robot.x, robot.y);
+    const double t_query = d->time;  // sim time, same clock as header stamps
+    auto snap = obstacle_source->GetObstacles(t_query);
+    const auto desired = dra::AxesToDesired(lx, ly, rx, seam_limits);
+    // §10.3 degrade ramp applied at the call site, before Filter() (§10.5).
+    const auto scaled = dra::ScaleDesired(desired, snap.command_scale);
+    const auto filtered = safety_filter.Filter(robot, scaled, snap.obstacles);
+    dpcbf_visualizer.Update(robot, snap.obstacles, filtered);
+    const auto axes = dra::CommandToAxes(filtered.command, seam_limits);
+    if (filter_io_log && filter_io_log->enabled()) {
+      dra::FilterIoPrefix prefix{};
+      prefix.t = t_query;
+      prefix.lx = lx; prefix.ly = ly; prefix.rx = rx;
+      prefix.robot[0] = robot.x; prefix.robot[1] = robot.y;
+      prefix.robot[2] = robot.phi;
+      prefix.robot[3] = robot.sagittal_velocity;
+      prefix.robot[4] = robot.lateral_velocity;
+      prefix.desired[0] = desired.sagittal;
+      prefix.desired[1] = desired.lateral;
+      prefix.desired[2] = desired.yaw_rate;
+      prefix.command_scale = snap.command_scale;
+      prefix.age_s = std::isinf(snap.age_s) ? -1.0 : snap.age_s;
+      prefix.staleness_state = static_cast<std::uint32_t>(snap.state);
+      dra::FilterIoSuffix suffix{};
+      suffix.out_command[0] = filtered.command.sagittal;
+      suffix.out_command[1] = filtered.command.lateral;
+      suffix.out_command[2] = filtered.command.yaw_rate;
+      for (int i = 0; i < 3; ++i) suffix.acceleration[i] = filtered.acceleration[i];
+      suffix.active_constraints = filtered.active_constraints;
+      suffix.active_dpcbf_constraints = filtered.active_dpcbf_constraints;
+      suffix.active_ecbf_constraints = filtered.active_ecbf_constraints;
+      suffix.solved = filtered.solved ? 1 : 0;
+      for (int i = 0; i < 3; ++i) suffix.out_axes[i] = axes[i];
+      filter_io_log->Append(prefix, snap.obstacles, suffix);
+    }
+    return axes;
+  };
+#else
+  // Non-ROS2 build: the baseline seam, byte-equivalent behavior (oracle
+  // path inlined exactly as at f111cfa), plus the inert capture hook.
+  JoystickAxisFilter axis_filter = [dpcbf_body_id, seam_limits, oracle_provider](
+                                       float lx, float ly, float rx) {
+    const auto desired = dra::AxesToDesired(lx, ly, rx, seam_limits);
+    const auto obstacle_states = oracle_provider();
     const dpcbf::RobotState robot = ReadRobotGroundTruth(m, d, dpcbf_body_id);
     const auto filtered = safety_filter.Filter(robot, desired, obstacle_states);
     dpcbf_visualizer.Update(robot, obstacle_states, filtered);
-    return std::array<float, 3>{
-        -CommandToAxis(filtered.command.lateral,
-                       safety_filter.lateral_velocity_min(),
-                       safety_filter.lateral_velocity_max()),
-        CommandToAxis(filtered.command.sagittal,
-                      safety_filter.sagittal_velocity_min(),
-                      safety_filter.sagittal_velocity_max()),
-        -CommandToAxis(filtered.command.yaw_rate,
-                       safety_filter.yaw_rate_min(),
-                       safety_filter.yaw_rate_max())};
+    const auto axes = dra::CommandToAxes(filtered.command, seam_limits);
+    if (filter_io_log && filter_io_log->enabled()) {
+      dra::FilterIoPrefix prefix{};
+      prefix.t = d->time;
+      prefix.lx = lx; prefix.ly = ly; prefix.rx = rx;
+      prefix.robot[0] = robot.x; prefix.robot[1] = robot.y;
+      prefix.robot[2] = robot.phi;
+      prefix.robot[3] = robot.sagittal_velocity;
+      prefix.robot[4] = robot.lateral_velocity;
+      prefix.desired[0] = desired.sagittal;
+      prefix.desired[1] = desired.lateral;
+      prefix.desired[2] = desired.yaw_rate;
+      prefix.command_scale = 1.0;
+      prefix.age_s = 0.0;
+      prefix.staleness_state = 0;
+      dra::FilterIoSuffix suffix{};
+      suffix.out_command[0] = filtered.command.sagittal;
+      suffix.out_command[1] = filtered.command.lateral;
+      suffix.out_command[2] = filtered.command.yaw_rate;
+      for (int i = 0; i < 3; ++i) suffix.acceleration[i] = filtered.acceleration[i];
+      suffix.active_constraints = filtered.active_constraints;
+      suffix.active_dpcbf_constraints = filtered.active_dpcbf_constraints;
+      suffix.active_ecbf_constraints = filtered.active_ecbf_constraints;
+      suffix.solved = filtered.solved ? 1 : 0;
+      for (int i = 0; i < 3; ++i) suffix.out_axes[i] = axes[i];
+      filter_io_log->Append(prefix, obstacle_states, suffix);
+    }
+    return axes;
   };
-  
+#endif
+
   std::unique_ptr<UnitreeSDK2BridgeBase> interface = nullptr;
   if (m->nu > NUM_MOTOR_IDL_GO) {
     interface = std::make_unique<G1Bridge>(m, d, axis_filter);
   } else {
     interface = std::make_unique<Go2Bridge>(m, d, axis_filter);
+  }
+
+  // Scripted command injection (see ScriptedJoystick above): installed on
+  // the PUBLIC lowstate/wireless_controller members before start(), so the
+  // 1 kHz thread never observes a half-wired joystick. Without a device
+  // (use_joystick=0) this is the only way the seam runs on this machine.
+  std::shared_ptr<ScriptedJoystick> scripted_joystick;
+  if (const char* profile = std::getenv("UNITREE_MUJOCO_SCRIPTED_COMMANDS")) {
+    scripted_joystick = std::make_shared<ScriptedJoystick>(profile, axis_filter);
+    if (auto* g1 = dynamic_cast<G1Bridge*>(interface.get())) {
+      g1->lowstate->joystick = scripted_joystick;
+      g1->wireless_controller->joystick = scripted_joystick;
+    } else if (auto* go2 = dynamic_cast<Go2Bridge*>(interface.get())) {
+      go2->lowstate->joystick = scripted_joystick;
+      go2->wireless_controller->joystick = scripted_joystick;
+    }
   }
   interface->start();
 

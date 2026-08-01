@@ -10,4 +10,8 @@ test_fixtures/*
 !test_fixtures/README.md
 !test_fixtures/wall_scene/
 !test_fixtures/scenarios/
+# T1 baseline: instrumentation patch + command profile + README are
+# committed; the capture itself is a generated fixture (md5 in §21)
+!test_fixtures/t1_baseline/
+test_fixtures/t1_baseline/*.bin
 __pycache__/

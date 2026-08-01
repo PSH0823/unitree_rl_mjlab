@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>dpcbf_ros_adapter</name>
+  <version>0.1.0</version>
+  <description>
+    The single seam between ROS2 and the frozen DPCBF library (§10):
+    ObstacleSource with modes oracle/shadow/estimated, a wait-free
+    double-buffered /obstacles_safe subscription with constant-velocity
+    extrapolation and the §10.3 staleness ladder, /dpcbf/status diagnostics,
+    and the T1/T6 filter-I/O capture format. This is the ONLY package that
+    includes both rclcpp and dpcbf headers (§15 rule).
+  </description>
+  <maintainer email="joan0219@yonsei.ac.kr">Seohyeon Lim</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>obstacle_detector</depend>
+  <depend>diagnostic_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
