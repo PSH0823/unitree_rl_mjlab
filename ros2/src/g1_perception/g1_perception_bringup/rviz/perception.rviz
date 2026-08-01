@@ -1,0 +1,70 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Plane Cell Count: 24
+      Cell Size: 1
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Show Names: true
+      Marker Scale: 0.5
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: LivoxCloud
+      Topic:
+        Value: /livox/lidar
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+      Use Fixed Frame: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: GTObstacles
+      Topic:
+        Value: /gt_obstacles_marker_relay/markers
+        Depth: 1
+    - Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Name: Odom
+      Topic:
+        Value: /odom
+        Depth: 10
+      Keep: 100
+      Position Tolerance: 0.05
+      Angle Tolerance: 0.05
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: false
+      Name: Scan (Phase 2)
+      Topic:
+        Value: /scan
+        Reliability Policy: Best Effort
+  Global Options:
+    Fixed Frame: odom
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 14
+      Pitch: 0.6
+      Yaw: 3.4
+      Focal Point:
+        X: 2
+        Y: 0
+        Z: 0.5
+Window Geometry:
+  Height: 900
+  Width: 1400

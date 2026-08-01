@@ -1,0 +1,6 @@
+# dpcbf_ros_adapter (§10.2/§10.3) — consumed in Phase 4. Appendix A verbatim.
+dpcbf_ros_adapter:
+  topic: /obstacles_safe
+  max_age: 0.30              # s
+  fade_out: 0.30             # s
+  hold_after_stale: 1.0      # s

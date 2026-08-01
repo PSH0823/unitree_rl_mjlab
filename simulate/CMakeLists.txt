@@ -57,4 +57,22 @@ target_link_libraries(unitree_mujoco PRIVATE
   dpcbf_visualizer
 )
 
+# Optional ROS2 sim bridge (§11.2). OFF => byte-identical baseline behavior.
+option(UNITREE_MUJOCO_WITH_ROS2
+       "Publish /clock, /sim/mj_state, /sim/gt_obstacles and dump the mirror model" OFF)
+if(UNITREE_MUJOCO_WITH_ROS2)
+  find_package(rclcpp REQUIRED)
+  find_package(rosgraph_msgs REQUIRED)
+  find_package(sim_msgs REQUIRED)
+  find_package(obstacle_detector REQUIRED)
+  target_sources(unitree_mujoco PRIVATE src/ros2_bridge.cc)
+  target_compile_definitions(unitree_mujoco PRIVATE UNITREE_MUJOCO_WITH_ROS2)
+  target_link_libraries(unitree_mujoco PRIVATE
+    rclcpp::rclcpp
+    ${rosgraph_msgs_TARGETS}
+    ${sim_msgs_TARGETS}
+    ${obstacle_detector_TARGETS}
+  )
+endif()
+
 add_executable(jstest src/joystick/jstest.cc src/joystick/joystick.cc)

@@ -1,0 +1,318 @@
+diff --git a/cpp/include/unitree/dds_wrapper/common/Subscription.h b/cpp/include/unitree/dds_wrapper/common/Subscription.h
+index 8ca173a..cf367f6 100644
+--- a/cpp/include/unitree/dds_wrapper/common/Subscription.h
++++ b/cpp/include/unitree/dds_wrapper/common/Subscription.h
+@@ -55,12 +55,12 @@ public:
+   }
+ 
+   MessageType msg_;
++  std::mutex mutex_;  // public: realtime consumers lock around msg_ reads
+ protected:
+   virtual void pre_communication() {}  // something before receiving message
+   virtual void post_communication() {} // something after receiving message
+ 
+   uint32_t timeout_ms_{1000};
+-  std::mutex mutex_;
+   unitree::robot::ChannelSubscriberPtr<MessageType> sub_;
+   std::chrono::steady_clock::time_point last_update_time_;
+ };
+diff --git a/cpp/include/unitree/dds_wrapper/common/unitree_joystick.hpp b/cpp/include/unitree/dds_wrapper/common/unitree_joystick.hpp
+index e73d033..58100ff 100644
+--- a/cpp/include/unitree/dds_wrapper/common/unitree_joystick.hpp
++++ b/cpp/include/unitree/dds_wrapper/common/unitree_joystick.hpp
+@@ -3,6 +3,8 @@
+ #include <math.h>
+ #include <stdint.h>
+ 
++#include <chrono>
++
+ namespace unitree
+ {
+ namespace common
+@@ -53,34 +55,54 @@ typedef union
+ 
+ // ***************************** Button & Axis ***************************** //
+ 
++// Common key state consumed generically (e.g. the deploy FSM's joystick DSL,
++// which also needs hold durations for chords like "L2(1s)").
++class KeyBase
++{
++public:
++  bool pressed = false;
++  bool on_pressed = false;
++  bool on_released = false;
++  double pressed_time = 0.0;  // seconds the current press has been held
++
++protected:
++  void touch(bool now_pressed)
++  {
++    on_pressed = (now_pressed && !pressed);
++    on_released = (!now_pressed && pressed);
++    if (on_pressed) press_start_ = std::chrono::steady_clock::now();
++    pressed = now_pressed;
++    pressed_time = pressed
++        ? std::chrono::duration<double>(
++              std::chrono::steady_clock::now() - press_start_).count()
++        : 0.0;
++  }
++
++private:
++  std::chrono::steady_clock::time_point press_start_{};
++};
++
+ template <typename T> // int, bool, string
+-class Button
++class Button : public KeyBase
+ {
+ public:
+   void operator()(const T& data){ // update
+-    pressed = (data != dataNull_);
+-    on_pressed = (pressed && data_ == dataNull_);
+-    on_released = (!pressed && data_ != dataNull_);
++    touch(data != dataNull_);
+     data_ = data;
+   }
+   const T& operator()() { return data_; }
+ 
+-  bool pressed = false;
+-  bool on_pressed = false;
+-  bool on_released = false;
+ private:
+   T data_{}, dataNull_{};
+ };
+ 
+-class Axis
++class Axis : public KeyBase
+ {
+ public:
+   void operator()(const float& data){ // update
+     auto data_deadzone = std::fabs(data) < deadzone ? 0.0 : data;
+     double new_data = data_ * (1.0 - smooth) + data_deadzone * smooth;
+-    pressed = (new_data > threshold);
+-    on_pressed = (pressed && data_ < threshold);
+-    on_released = (!pressed && data_ > threshold);
++    touch(new_data > threshold);
+     data_ = new_data;
+   }
+ 
+@@ -90,9 +112,6 @@ public:
+   float deadzone = 0.01;
+ 
+   // Change an axis value to a button
+-  bool pressed = false;
+-  bool on_pressed = false;
+-  bool on_released = false;
+   float threshold{0.5};
+ private:
+   float data_{};
+@@ -102,6 +121,10 @@ private:
+ 
+ struct UnitreeJoystick
+ {
++  virtual ~UnitreeJoystick() = default;
++  // Hook for device-backed joysticks (simulators poll the device here).
++  virtual void update() {}
++
+   // Adopts standard joystick key names
+   Button<int> back;
+   Button<int> start;
+diff --git a/cpp/include/unitree/dds_wrapper/robots/g1/g1_pub.h b/cpp/include/unitree/dds_wrapper/robots/g1/g1_pub.h
+index 15531b7..2ccd306 100644
+--- a/cpp/include/unitree/dds_wrapper/robots/g1/g1_pub.h
++++ b/cpp/include/unitree/dds_wrapper/robots/g1/g1_pub.h
+@@ -1,8 +1,12 @@
+ #pragma once
+ 
++#include <cstring>
++#include <memory>
++
+ #include <eigen3/Eigen/Dense>
+ #include <unitree/dds_wrapper/common/Publisher.h>
+ #include "unitree/dds_wrapper/common/crc.h"
++#include "unitree/dds_wrapper/common/unitree_joystick.hpp"
+ 
+ #include <unitree/idl/hg/LowCmd_.hpp>
+ #include <unitree/idl/hg/LowState_.hpp>
+@@ -21,20 +25,63 @@ namespace publisher
+ class LowState : public RealTimePublisher<unitree_hg::msg::dds_::LowState_>
+ {
+ public:
+-    LowState(std::string topic = "rt/lowstate") : RealTimePublisher<MsgType>(topic) 
++    LowState(std::string topic = "rt/lowstate") : RealTimePublisher<MsgType>(topic)
+     {
+     }
++
++    // Simulators attach a joystick; its state is serialized into
++    // wireless_remote on every publish (same layout go2_sub.h parses).
++    std::shared_ptr<unitree::common::UnitreeJoystick> joystick;
++
++private:
++    void pre_communication() override {
++        if (joystick) {
++            unitree::common::REMOTE_DATA_RX key{};
++            auto& j = *joystick;
++            key.RF_RX.btn.components.R1 = j.RB.pressed;
++            key.RF_RX.btn.components.L1 = j.LB.pressed;
++            key.RF_RX.btn.components.Start = j.start.pressed;
++            key.RF_RX.btn.components.Select = j.back.pressed;
++            key.RF_RX.btn.components.R2 = j.RT.pressed;
++            key.RF_RX.btn.components.L2 = j.LT.pressed;
++            key.RF_RX.btn.components.f1 = j.F1.pressed;
++            key.RF_RX.btn.components.f2 = j.F2.pressed;
++            key.RF_RX.btn.components.A = j.A.pressed;
++            key.RF_RX.btn.components.B = j.B.pressed;
++            key.RF_RX.btn.components.X = j.X.pressed;
++            key.RF_RX.btn.components.Y = j.Y.pressed;
++            key.RF_RX.btn.components.up = j.up.pressed;
++            key.RF_RX.btn.components.right = j.right.pressed;
++            key.RF_RX.btn.components.down = j.down.pressed;
++            key.RF_RX.btn.components.left = j.left.pressed;
++            key.RF_RX.lx = j.lx();
++            key.RF_RX.ly = j.ly();
++            key.RF_RX.rx = j.rx();
++            key.RF_RX.ry = j.ry();
++            key.RF_RX.L2 = j.LT();
++            std::memcpy(&msg_.wireless_remote()[0], key.buff, 40);
++        }
++        msg_.crc() = crc32_core((uint32_t*)&msg_, (sizeof(MsgType)>>2)-1);
++    }
+ };
+ 
+ 
+ class LowCmd : public RealTimePublisher<unitree_hg::msg::dds_::LowCmd_>
+ {
+ public:
+-    LowCmd(std::string topic = "rt/lowcmd") : RealTimePublisher<MsgType>(topic) 
++    LowCmd(std::string topic = "rt/lowcmd") : RealTimePublisher<MsgType>(topic)
+     {
+         for(auto & m : msg_.motor_cmd()) m.mode(1);
+     }
+ 
++    // True when the robot's reported mode_machine matches the one this
++    // commander intends to drive (29dof=5, 23dof=4).
++    template <typename LowStateSubscriptionPtr>
++    bool check_mode_machine(const LowStateSubscriptionPtr& lowstate) const
++    {
++        return lowstate && lowstate->msg_.mode_machine() == msg_.mode_machine();
++    }
++
+ private:
+     /**
+      * @brief Something before sending the message.
+diff --git a/cpp/include/unitree/dds_wrapper/robots/go2/go2_pub.h b/cpp/include/unitree/dds_wrapper/robots/go2/go2_pub.h
+index db1be8f..a06bd6a 100644
+--- a/cpp/include/unitree/dds_wrapper/robots/go2/go2_pub.h
++++ b/cpp/include/unitree/dds_wrapper/robots/go2/go2_pub.h
+@@ -1,7 +1,11 @@
+ #pragma once
+ 
++#include <cstring>
++#include <memory>
++
+ #include "unitree/dds_wrapper/common/Publisher.h"
+ #include "unitree/dds_wrapper/common/crc.h"
++#include "unitree/dds_wrapper/common/unitree_joystick.hpp"
+ 
+ #include <unitree/idl/go2/LowCmd_.hpp>
+ #include <unitree/idl/go2/LowState_.hpp>
+@@ -53,10 +57,99 @@ class LowState : public RealTimePublisher<unitree_go::msg::dds_::LowState_>
+ {
+ public:
+   LowState(std::string topic = "rt/lowstate")
+-  : RealTimePublisher<MsgType>(topic) 
++  : RealTimePublisher<MsgType>(topic)
++  {}
++
++  // Simulators attach a joystick; its state is serialized into
++  // wireless_remote on every publish (inverse of go2_sub.h's parsing).
++  std::shared_ptr<unitree::common::UnitreeJoystick> joystick;
++
++private:
++  void pre_communication() override {
++    if (joystick) {
++      unitree::common::REMOTE_DATA_RX key{};
++      auto& j = *joystick;
++      key.RF_RX.btn.components.R1 = j.RB.pressed;
++      key.RF_RX.btn.components.L1 = j.LB.pressed;
++      key.RF_RX.btn.components.Start = j.start.pressed;
++      key.RF_RX.btn.components.Select = j.back.pressed;
++      key.RF_RX.btn.components.R2 = j.RT.pressed;
++      key.RF_RX.btn.components.L2 = j.LT.pressed;
++      key.RF_RX.btn.components.f1 = j.F1.pressed;
++      key.RF_RX.btn.components.f2 = j.F2.pressed;
++      key.RF_RX.btn.components.A = j.A.pressed;
++      key.RF_RX.btn.components.B = j.B.pressed;
++      key.RF_RX.btn.components.X = j.X.pressed;
++      key.RF_RX.btn.components.Y = j.Y.pressed;
++      key.RF_RX.btn.components.up = j.up.pressed;
++      key.RF_RX.btn.components.right = j.right.pressed;
++      key.RF_RX.btn.components.down = j.down.pressed;
++      key.RF_RX.btn.components.left = j.left.pressed;
++      key.RF_RX.lx = j.lx();
++      key.RF_RX.ly = j.ly();
++      key.RF_RX.rx = j.rx();
++      key.RF_RX.ry = j.ry();
++      key.RF_RX.L2 = j.LT();
++      std::memcpy(&msg_.wireless_remote()[0], key.buff, 40);
++    }
++    msg_.crc() = crc32_core((uint32_t*)&msg_, (sizeof(MsgType)>>2)-1);
++  }
++};
++
++class SportModeState : public RealTimePublisher<unitree_go::msg::dds_::SportModeState_>
++{
++public:
++  SportModeState(std::string topic = "rt/sportmodestate")
++  : RealTimePublisher<MsgType>(topic)
+   {}
+ };
+ 
++class WirelessController : public RealTimePublisher<unitree_go::msg::dds_::WirelessController_>
++{
++public:
++  WirelessController(std::string topic = "rt/wirelesscontroller")
++  : RealTimePublisher<MsgType>(topic)
++  {}
++
++  std::shared_ptr<unitree::common::UnitreeJoystick> joystick;
++
++  // The bridge only calls unlockAndPublish(); acquire the lock here and let
++  // pre_communication() below fill the message from the joystick.
++  void unlockAndPublish()
++  {
++    if (!this->trylock()) return;
++    RealTimePublisher<MsgType>::unlockAndPublish();
++  }
++
++private:
++  void pre_communication() override {
++    if (!joystick) return;
++    auto& j = *joystick;
++    msg_.lx() = j.lx();
++    msg_.ly() = j.ly();
++    msg_.rx() = j.rx();
++    msg_.ry() = j.ry();
++    unitree::common::BtnUnion keys{};
++    keys.components.R1 = j.RB.pressed;
++    keys.components.L1 = j.LB.pressed;
++    keys.components.Start = j.start.pressed;
++    keys.components.Select = j.back.pressed;
++    keys.components.R2 = j.RT.pressed;
++    keys.components.L2 = j.LT.pressed;
++    keys.components.f1 = j.F1.pressed;
++    keys.components.f2 = j.F2.pressed;
++    keys.components.A = j.A.pressed;
++    keys.components.B = j.B.pressed;
++    keys.components.X = j.X.pressed;
++    keys.components.Y = j.Y.pressed;
++    keys.components.up = j.up.pressed;
++    keys.components.right = j.right.pressed;
++    keys.components.down = j.down.pressed;
++    keys.components.left = j.left.pressed;
++    msg_.keys() = keys.value;
++  }
++};
++
+ class MotorCmds : public RealTimePublisher<unitree_go::msg::dds_::MotorCmds_>
+ {
+ public:

@@ -1,0 +1,63 @@
+# External dependency pins for the DPCBF perception subsystem (§13).
+# Every entry is pinned by SHA — never a floating branch.
+# Resolution date: 2026-08-01 (git ls-remote against upstream).
+#
+# Import:  cd ros2 && vcs import src < deps.repos
+#
+# Branch provenance (informational; the SHA is authoritative):
+#   cyclonedds              tag 0.10.2
+#   cyclonedds-cxx          tag 0.10.2
+#   unitree_sdk2            main
+#   unitree_dds_wrapper     Agnel-Wang fork, commit BEFORE "delete cpp" (f20eb69) —
+#                           the C++ wrapper simulate needs was removed upstream;
+#                           unitreerobotics/unitree_dds_wrapper is python-only.
+#                           Header-only: install = copy cpp/include/unitree into prefix.
+#   rmw_cyclonedds          humble
+#   pointcloud_to_laserscan humble
+#   obstacle_detector_2     humble-devel  (fork target — see §5.3; org fork pending)
+#   MuJoCo-LiDAR            main          (python; installed via PYTHONPATH, not colcon)
+repositories:
+  external/cyclonedds:
+    type: git
+    url: https://github.com/eclipse-cyclonedds/cyclonedds.git
+    version: 9995905bce6c4cf9f740d6438bbf7fcfd1c83dfd
+  external/cyclonedds-cxx:
+    type: git
+    url: https://github.com/eclipse-cyclonedds/cyclonedds-cxx.git
+    version: 2a372d2c4597faea54543b925755fa2d7cdd4232
+  external/unitree_sdk2:
+    type: git
+    url: https://github.com/unitreerobotics/unitree_sdk2.git
+    version: 21d0a3b2c46ee48c8fdf2783becb6be3beb0a59b
+  external/unitree_dds_wrapper:
+    type: git
+    url: https://github.com/Agnel-Wang/unitree_dds_wrapper.git
+    version: 9dc107d2c163539ff48aa98454ca037815da821e
+  external/rmw_cyclonedds:
+    type: git
+    url: https://github.com/ros2/rmw_cyclonedds.git
+    version: fa8831b9f331d669c3ea408fd00606a223c6bbd9
+  external/pointcloud_to_laserscan:
+    type: git
+    url: https://github.com/ros-perception/pointcloud_to_laserscan.git
+    version: 59bf996fb3ee7db0026a5cd3ce0d2a39d2e602ea
+  external/obstacle_detector_2:
+    type: git
+    url: https://github.com/harmony-eu/obstacle_detector_2.git
+    version: 6ff7ac48d54e41c559158a4472a6df8f97eaf616
+  external/MuJoCo-LiDAR:
+    type: git
+    url: https://github.com/TATP-233/MuJoCo-LiDAR.git
+    version: 287b50122ac5188e42ec492484965335a6a55bef
+# ---------------------------------------------------------------------------
+# Reserved for later phases (SHAs resolved 2026-08-01, not imported yet):
+#   external/direct_lidar_inertial_odometry:   # Phase 5, LIO primary (§5.7)
+#     url: https://github.com/vectr-ucla/direct_lidar_inertial_odometry.git
+#     version: c8acc37100e349d70a9d8432d656cbce7e5072cd   # feature/ros2
+#   external/patchwork-plusplus:               # Phase 7, ground seg (§5.8)
+#     url: https://github.com/url-kaist/patchwork-plusplus.git
+#     version: 3e6903a1d5537a4cc2ace897b0bbb98a92d6014c   # master
+#   external/rosbag2_storage_mcap:             # MCAP recording (§14.4); blocked on apt/sudo
+#     url: https://github.com/ros-tooling/rosbag2_storage_mcap.git
+#     version: c1c2159679921a4f4392f370172c28e7b3b01452   # main
+# ---------------------------------------------------------------------------

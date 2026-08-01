@@ -1,0 +1,7 @@
+# External sources are pinned in deps.repos and imported with vcstool — never committed.
+src/external/
+# colcon artifacts
+build/
+install/
+log/
+test_fixtures/

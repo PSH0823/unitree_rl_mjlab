@@ -40,6 +40,9 @@
 #include "dpcbf/dynamic_obstacles.h"
 #include "dpcbf/dpcbf_safety_filter.h"
 #include "dpcbf/dpcbf_visualizer.h"
+#ifdef UNITREE_MUJOCO_WITH_ROS2
+#include "ros2_bridge.h"
+#endif
 
 #define MUJOCO_PLUGIN_DIR "mujoco_plugin"
 #define NUM_MOTOR_IDL_GO 20
@@ -349,6 +352,14 @@ namespace
           {
             mju::strcpy_arr(loadError, mjs_getError(spec));
           }
+#ifdef UNITREE_MUJOCO_WITH_ROS2
+          // The sidecar mirrors the COMPILED model (incl. runtime-added
+          // obstacle mocap bodies), not the raw scene file (§11.2).
+          if (mnew)
+          {
+            Ros2DumpMirrorModel(spec);
+          }
+#endif
         }
         catch (const std::exception& error)
         {
@@ -651,7 +662,17 @@ void *UnitreeSdk2BridgeThread(void *arg)
     usleep(500000);
   }
 
+#ifdef UNITREE_MUJOCO_WITH_ROS2
+  // ROS2 must initialize BEFORE the SDK2 ChannelFactory: rmw_cyclonedds
+  // creates the CycloneDDS domain explicitly and hard-fails if it already
+  // exists in-process (R-3, gate T10). The factory then JOINS the existing
+  // domain (empty interface argument); the network interface is pinned for
+  // both stacks via CYCLONEDDS_URI, derived from config.yaml by the bridge.
+  SimRos2Bridge ros2_bridge;
+  unitree::robot::ChannelFactory::Instance()->Init(param::config.domain_id, "");
+#else
   unitree::robot::ChannelFactory::Instance()->Init(param::config.domain_id, param::config.interface);
+#endif
 
 
   int body_id = mj_name2id(m, mjOBJ_BODY, "torso_link");
@@ -715,11 +736,22 @@ void *UnitreeSdk2BridgeThread(void *arg)
     interface = std::make_unique<Go2Bridge>(m, d, axis_filter);
   }
   interface->start();
-  
+
+#ifdef UNITREE_MUJOCO_WITH_ROS2
+  // ROS2 publishing reuses this otherwise-idle SDK2 bridge thread. mjData is
+  // read without locks — the same pre-existing benign-race class as the
+  // bridge's own reads (R-9: not worsened, no locks added).
+  while (true)
+  {
+    ros2_bridge.SpinOnce(m, d, [] { return dynamic_obstacles.Snapshot(); });
+    usleep(1000);
+  }
+#else
   while (true)
   {
     sleep(1);
   }
+#endif
 }
 //------------------------------------------ main --------------------------------------------------
 

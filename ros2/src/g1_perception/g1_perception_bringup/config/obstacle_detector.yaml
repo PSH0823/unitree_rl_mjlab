@@ -1,0 +1,31 @@
+# obstacle_detector fork parameters (§9.5) — consumed in Phase 3.
+# Appendix A verbatim (H-6/H-7 provenance).
+obstacle_extractor:
+  ros__parameters:
+    active: true
+    use_scan: true
+    use_pcl: false
+    min_group_points: 5
+    max_group_distance: 0.10
+    distance_proportion: 0.01745
+    max_split_distance: 0.20
+    max_merge_separation: 0.20
+    max_merge_spread: 0.20
+    max_circle_radius: 0.60
+    radius_enlargement: 0.17          # re-tuned from 0.25 (short-arc bias, H-7)
+    circles_from_visibles: true
+    discard_converted_segments: true
+    transform_coordinates: true
+    frame_id: odom
+
+obstacle_tracker:
+  ros__parameters:
+    active: true
+    loop_rate: 20.0                   # 2x scan rate (H-6 compromise; P-2 pending)
+    tracking_duration: 1.0
+    min_correspondence_cost: 0.3
+    std_correspondence_dev: 0.15
+    process_variance: 0.0001
+    process_rate_variance: 0.03
+    measurement_variance: 1.0
+    frame_id: odom

@@ -1,0 +1,10 @@
+# Safety gating & inflation (§9.6, H-8) — consumed in Phase 4. Appendix A verbatim.
+safety_obstacle_filter:
+  ros__parameters:
+    max_age: 0.30              # s
+    min_radius: 0.20           # m
+    max_circle_radius: 0.60    # m (spurious wall arcs)
+    fixed_inflation: 0.03      # m
+    latency_horizon: 0.12      # s
+    v_max_obstacle: 1.5        # m/s
+    k_sigma: 2.748             # active only with P-3 covariance export

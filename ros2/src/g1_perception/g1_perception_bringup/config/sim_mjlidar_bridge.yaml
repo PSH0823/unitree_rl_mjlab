@@ -1,0 +1,12 @@
+sim_mjlidar_bridge:
+  ros__parameters:
+    # mirror_model_path is set from the launch argument
+    lidar_site: mid360_link
+    base_body: pelvis
+    scan_rate: 10.0            # Hz (§7.1)
+    cutoff_dist: 40.0          # m (Mid360 10%-reflectivity range)
+    min_range: 0.1             # m (Livox datasheet minimum)
+    masked_geom_group: 2       # H-4 head-shell mask
+    odom_frame: odom
+    base_frame: base_link
+    lidar_frame: mid360_link
