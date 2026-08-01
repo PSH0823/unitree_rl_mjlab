@@ -87,3 +87,25 @@ Measured-wall validation fixture (generator + GT, no binary payload): see
 `wall_scene/README.md`. Outputs regenerate to `/tmp/wall_scene_phase2` at
 test time; the ±2 cm gate runs in CTest
 (`test_wall_accuracy.launch_test.py`).
+
+## hw/<YYYY-MM-DD>/ (Phase 5B) — robot-session bags, NOT YET RECORDED
+
+Reserved layout for the hardware session. One directory per session date,
+one bag per checklist block (`doc/phase5b_checklists.md`):
+
+| bag | block | contents |
+|---|---|---|
+| `b1_raw_driver` | 1 | `/livox/lidar /livox/imu` — first artefact, recorded before anything consumes it |
+| `b2_wall` | 2 | + `/odom /tf /tf_static /scan` — surveyed-wall extrinsic check |
+| `b3_dlio_static` | 3 | ≥10 min stationary, for the <1 cm/min drift gate |
+| `b3_dlio_carried` | 3 | optional, externally moved |
+| `b4_selfhit` | 4 | `/livox/lidar` only, **perception NOT running** (CropBox bypassed): static / arm-swing / torso-motion |
+| `b5_t4` | 5 | full stack + surveyed props incl. one r ≥ 0.30 m; paired with `t4_layout.yaml` |
+| `b6_q3`, `b6_q8` | 6 | rosette density parity vs the Phase-2 table; near-field head-aperture scan |
+| `b7_q5` | 7 | Unitree onboard odometry alongside `/odom` |
+
+Each bag gets an md5, a size, a duration and a one-line "what it is for" here
+at the end of the session, same as the sim fixtures above. The layout file
+`t4_layout.yaml` (surveyed GT, odom frame) is **committed** — it is the
+hardware equivalent of `scenarios/make_scenario_scene.py`'s GT, and
+`test_detection_static.launch_test.py` reads it via `T4_LAYOUT`.

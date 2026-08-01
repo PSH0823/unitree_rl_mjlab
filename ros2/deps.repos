@@ -17,6 +17,24 @@
 #   obstacle_detector_2     humble-devel  (fork target — see §5.3; org fork pending;
 #                           recorded patches 0003 (P-1) + 0004 (P-2), Phase 3)
 #   MuJoCo-LiDAR            main          (python; installed via PYTHONPATH, not colcon)
+#   Livox-SDK2              tag v1.3.1 — Phase-5A addition. Prerequisite of
+#                           livox_ros_driver2 (which find_library's
+#                           liblivox_lidar_sdk_shared.so). Plain CMake, no
+#                           package.xml → COLCON_IGNOREd and built into the
+#                           merged prefix by the livox_sdk2_vendor package.
+#                           Tag pinned, not master: master is v1.3.1 + one
+#                           commit (Mid-360S IMU range, Ubuntu 24.04 build
+#                           fix) that this robot/distro does not need.
+#   livox_ros_driver2       tag 1.2.6 (== master @ pin date) — Phase-5A.
+#                           Needs package_ROS2.xml copied to package.xml and
+#                           -DROS_EDITION=ROS2 -DDISTRO_ROS=humble (upstream
+#                           does this in build.sh, which cannot be used inside
+#                           an existing colcon workspace: it rm -rf's
+#                           build/devel/install). Patch 0005 carries both plus
+#                           the /livox/imu frame_id fix.
+#   direct_lidar_inertial_odometry
+#                           feature/ros2 — Phase-5A, LIO primary (§5.7).
+#                           Patch 0006: cloud subscription SensorData QoS.
 #   perception_pcl          tag 2.6.1 — Phase-2 addition. Rationale: the Humble
 #                           BINARY pcl_ros (2.4.5) ships NO filter components
 #                           (only pcd_to_pointcloud + stale ROS1 nodelet XMLs);
@@ -64,11 +82,28 @@ repositories:
     type: git
     url: https://github.com/ros-perception/perception_pcl.git
     version: 9d078ebf1dffa9723bb4c6e98654e6049c4d366f
+  # --- hardware stack (Phase 5A; SHAs resolved 2026-08-01) -----------------
+  external/Livox-SDK2:
+    type: git
+    url: https://github.com/Livox-SDK/Livox-SDK2.git
+    version: f5d9375f84efe2b15bc0a052d3e18482ed13adf4   # tag v1.3.1, 2026-04-15
+  external/livox_ros_driver2:
+    type: git
+    url: https://github.com/Livox-SDK/livox_ros_driver2.git
+    version: 13eb05e4e6dd7a765b934d0c5fd6236676a57b49   # tag 1.2.6, 2026-04-14
+  external/direct_lidar_inertial_odometry:
+    type: git
+    url: https://github.com/vectr-ucla/direct_lidar_inertial_odometry.git
+    version: c8acc37100e349d70a9d8432d656cbce7e5072cd   # feature/ros2, 2024-11-21
 # ---------------------------------------------------------------------------
 # Reserved for later phases (SHAs resolved 2026-08-01, not imported yet):
-#   external/direct_lidar_inertial_odometry:   # Phase 5, LIO primary (§5.7)
-#     url: https://github.com/vectr-ucla/direct_lidar_inertial_odometry.git
-#     version: c8acc37100e349d70a9d8432d656cbce7e5072cd   # feature/ros2
+#   external/FAST_LIO_LOCALIZATION_HUMANOID:   # Q-4 bake-off alternate (§5.7)
+#     url: https://github.com/deepglint/FAST_LIO_LOCALIZATION_HUMANOID.git
+#     version: df4772ec4797172430e7efe990711d09a529f4ad   # humble
+#     # NOT imported: it needs livox CustomMsg, i.e. driver xfer_format 1,
+#     # which the driver publishes INSTEAD OF (not alongside) PointCloud2 —
+#     # see the Phase-5A §5.6 correction. The bake-off is therefore a separate
+#     # capture session, not a co-run; build it only if Q-4 is exercised.
 #   external/patchwork-plusplus:               # Phase 7, ground seg (§5.8)
 #     url: https://github.com/url-kaist/patchwork-plusplus.git
 #     version: 3e6903a1d5537a4cc2ace897b0bbb98a92d6014c   # master

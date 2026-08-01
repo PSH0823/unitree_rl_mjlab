@@ -7,6 +7,10 @@ vcs import --shallow src < deps.repos
 touch src/external/MuJoCo-LiDAR/COLCON_IGNORE \
       src/external/unitree_dds_wrapper/COLCON_IGNORE \
       src/external/cyclonedds-cxx/COLCON_IGNORE
+# Livox-SDK2 is plain CMake with no package.xml: colcon cannot build it, and
+# the livox_sdk2_vendor package drives it into the merged prefix instead
+# (upstream's instructions install to /usr/local, which needs sudo).
+touch src/external/Livox-SDK2/COLCON_IGNORE
 # perception_pcl 2.6.1: only pcl_ros is built (for the CropBox component the
 # Humble binary lacks); pcl_conversions stays the Humble binary.
 touch src/external/perception_pcl/perception_pcl/COLCON_IGNORE \
@@ -40,4 +44,23 @@ git -C src/external/obstacle_detector_2 apply --check ../../../patches/0003-obst
 git -C src/external/obstacle_detector_2 apply --check ../../../patches/0004-obstacle-detector-p2-measurement-driven-tracker.patch 2>/dev/null \
   && git -C src/external/obstacle_detector_2 apply ../../../patches/0004-obstacle-detector-p2-measurement-driven-tracker.patch \
   || echo "obstacle_detector P-2 patch already applied"
+# Phase 5A, livox_ros_driver2. Upstream ships package_ROS1.xml/package_ROS2.xml
+# and expects build.sh to copy the right one into place — but build.sh also
+# `rm -rf`s ../../build ../../devel ../../install, which would delete this
+# workspace. Patch 0005 therefore adds package.xml (the ROS2 one verbatim) and
+# a colcon.pkg carrying the -DROS_EDITION=ROS2 -DDISTRO_ROS=humble that
+# CMakeLists.txt needs (without DISTRO_ROS the humble typesupport-target branch
+# is skipped and the link fails), plus one upstream bug fix: InitImuMsg
+# hardcoded frame_id "livox_frame" instead of honouring the frame_id parameter.
+git -C src/external/livox_ros_driver2 apply --check ../../../patches/0005-livox-driver-ros2-humble-package-and-imu-frame-id.patch 2>/dev/null \
+  && git -C src/external/livox_ros_driver2 apply ../../../patches/0005-livox-driver-ros2-humble-package-and-imu-frame-id.patch \
+  || echo "livox driver patch already applied"
+# Phase 5A, DLIO. Its cloud subscription is Reliable, which cannot match the
+# best-effort cloud publishers this architecture uses everywhere (§7.1) — DLIO
+# would show a connected topic and receive nothing, the exact failure class the
+# obstacle_extractor hit in Phase 3. Patch 0006 makes it SensorData (depth 1)
+# and /odom Reliable depth 10.
+git -C src/external/direct_lidar_inertial_odometry apply --check ../../../patches/0006-dlio-cloud-subscription-sensor-data-qos.patch 2>/dev/null \
+  && git -C src/external/direct_lidar_inertial_odometry apply ../../../patches/0006-dlio-cloud-subscription-sensor-data-qos.patch \
+  || echo "DLIO QoS patch already applied"
 echo "External sources ready."

@@ -1,0 +1,39 @@
+# livox_ros_driver2 parameters (§12, Phase 5A).
+#
+# Everything here is a hardware-source specific; nothing downstream of
+# /livox/lidar knows this file exists (D4). Verified against the pinned
+# checkout (tag 1.2.6, patch 0005), not against the README:
+#
+#   xfer_format 0  = PointCloud2 with 7 fields
+#                    (x,y,z float32; intensity float32; tag u8; line u8;
+#                     timestamp float64) -> satisfies the §7.2 contract.
+#   xfer_format 1  = livox CustomMsg (FAST-LIO's required input). ONE format
+#                    at a time: transfer_format_ selects a single publisher,
+#                    so "dual-publish CustomMsg alongside PointCloud2" (§5.6)
+#                    is NOT possible with one driver instance. The Q-4
+#                    bake-off is a separate capture session, not a co-run.
+#   xfer_format 2  = pcl::PointCloud<PointXYZI> — ROS1 ONLY. In the ROS2
+#                    build CreatePublisher() has that branch #if 0'd out and
+#                    PublishPclMsg() prints "not supported in ROS2" and
+#                    returns. §5.6/§7.2's "0 or 2" is wrong for ROS2: 0 only.
+#
+# frame_id: the driver's own ROS2 default is "frame_default" (its example
+# launch files say "livox_frame"); §7.1 requires mid360_link in BOTH worlds,
+# so it must be set here. Patch 0005 additionally makes /livox/imu honour it
+# (upstream hardcoded "livox_frame" for the IMU only).
+#
+# Publisher QoS is Reliable depth 256 and is NOT parameterised — a §7.1
+# deviation recorded rather than patched, because Reliable-pub/BestEffort-sub
+# is a compatible match and the whole downstream stack subscribes SensorData.
+/**:
+  ros__parameters:
+    xfer_format: 0
+    multi_topic: 0          # one LiDAR, one shared /livox/lidar + /livox/imu
+    data_src: 0             # 0 = live LiDAR (others = replay, unused here)
+    publish_freq: 10.0      # §7.1: 10 Hz
+    output_data_type: 0     # 0 = publish to ROS
+    frame_id: mid360_link   # §7.1/§8.1 — NOT the driver default
+    lvx_file_path: ''
+    cmdline_input_bd_code: ''
+    # user_config_path is set by source_hw.launch.py so the JSON and this
+    # YAML cannot drift apart.

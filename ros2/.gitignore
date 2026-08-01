@@ -10,6 +10,14 @@ test_fixtures/*
 !test_fixtures/README.md
 !test_fixtures/wall_scene/
 !test_fixtures/scenarios/
+# Phase 5B hardware sessions: bags stay out, the surveyed-GT layout files and
+# per-session READMEs are committed (they are inputs to the T4-hardware run,
+# not outputs of it).
+!test_fixtures/hw/
+test_fixtures/hw/*/*
+!test_fixtures/hw/*/*.yaml
+!test_fixtures/hw/*/README.md
+
 # T1 baseline: instrumentation patch + command profile + README are
 # committed; the capture itself is a generated fixture (md5 in §21)
 !test_fixtures/t1_baseline/

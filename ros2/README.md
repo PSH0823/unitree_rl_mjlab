@@ -46,9 +46,23 @@ installed on this machine** (the doc's `/opt/unitree_robotics` does not
 exist); both are pinned in `deps.repos` and built here too. Side effect: the
 whole stack shares ONE CycloneDDS — the R-3 mitigation by construction.
 
+Phase 5A adds the hardware stack to the same treatment: `Livox-SDK2` (v1.3.1)
+is plain CMake with no `package.xml`, so it is COLCON_IGNOREd and built into
+the merged prefix by the `livox_sdk2_vendor` package (upstream's instructions
+install to `/usr/local`); `livox_ros_driver2` (1.2.6) carries patch 0005
+(`package.xml` + a `colcon.pkg` with `-DROS_EDITION=ROS2 -DDISTRO_ROS=humble`,
+because upstream's `build.sh` would `rm -rf` this workspace's build/install
+trees, plus the `/livox/imu` `frame_id` fix); DLIO (`feature/ros2`) carries
+patch 0006 (cloud subscription SensorData QoS, `/odom` depth 10).
+
 Still missing until someone runs apt with sudo:
 `ros-humble-rosbag2-storage-mcap` (bags record as sqlite3 until then),
 `ros-humble-foxglove-bridge`.
+
+**No aarch64 build is possible on this machine** (no cross toolchain, no
+`qemu-user-static`/binfmt handler — registering one needs root; `podman` can
+pull arm64 images but cannot execute them). The Orin build is a robot-day /
+Q-1 item; see `doc/phase5a_seam_audit.md`.
 
 ## Build
 
@@ -133,6 +147,25 @@ ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
   The adapter node deliberately runs `use_sim_time=false` — it must not
   consume the /clock its own process publishes; all safety ages are sim-time
   `d->time` vs sim-time header stamps.
+- **`pkill -f component_container` kills the shell that runs it** (Phase 5A):
+  the shell's own command line contains the pattern, so pkill matches itself
+  and the rest of the script never executes — it looks exactly like a silent
+  hang. Always bracket: `pkill -9 -f 'component_containe[r]'`. Same family as
+  the `unitree_mujoc[o]` trap below.
+- **Hardware source (Phase 5A):**
+  `ros2 launch g1_perception_bringup bringup.launch.py source:=hw` runs
+  `livox_ros_driver2` + DLIO and defaults `use_sim_time` to **false** (there is
+  no `/clock` on hardware). `source_hw.launch.py` takes `driver:=on|off`,
+  `lio:=dlio|off`, `map:=false|true`. Before launching anything on the robot,
+  run `ros2 run g1_perception_bringup hw_config_check.py` — it exits 2 while
+  `MID360_config.json` still carries the upstream placeholder IPs (Q-1).
+  **The driver does not exit when it cannot bind**: it logs `bind failed` /
+  `Init lds lidar fail!`, keeps running with no `/livox/*` topic created at
+  all, and ignores SIGINT/SIGTERM — `pkill -9 -f livox`. On the bench,
+  `test/hw_source_stub.py` replays a fixture bag in the driver's exact wire
+  format (7 fields, 26-byte packed stride, RELIABLE publisher, wall-clock
+  stamps) plus a synthetic IMU, which is what the two Phase-5A launch tests
+  drive.
 - **When killing a live simulate in scripts, match `unitree_mujoc[o]`** — the
   process cmdline is `./unitree_mujoco`, so path-qualified pkill patterns
   miss it and a stray 1 kHz sim keeps publishing (doubled /dpcbf/status and
@@ -152,6 +185,11 @@ ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
 | T5 dynamic tracking (0.5 / 0.8 m/s) | CTest `test_tracking_dynamic_{05,08}.launch_test.py` (fixtures: `test_fixtures/s2_cross_*`) |
 | T8 replay determinism (HARD, P-2 landed) | CTest `t8_replay_determinism` (script `test/test_t8_replay_determinism.py`; fixture: `s1_surveyed`) |
 | T1 oracle equivalence (Phase 4, HARD) | simulate CTest `t1_oracle_equivalence` in `simulate/build_ros2` (`ctest -R t1`; fixture: `test_fixtures/t1_baseline/`) |
+| T7-hw extrinsic guard (Phase 5A) | `colcon test --packages-select g1_description` (CTest `t7_hw_extrinsic_guard`) — DLIO's extrinsics config re-derived from the xacro |
+| Hardware cloud contract + QoS wire-check (Phase 5A) | CTest `test_hw_source_contract.launch_test.py` (driver-format cloud through the unmodified perception stack) |
+| DLIO wiring smoke (Phase 5A) | CTest `test_dlio_wiring.launch_test.py` |
+| Mid360 bring-up preflight (Phase 5A) | CTest `hw_config_check` / `ros2 run g1_perception_bringup hw_config_check.py` |
+| T4-**hardware** (Phase 5B) | the SAME harness: `T4_BAG=<hw bag> T4_LAYOUT=<layout.yaml> T4_USE_SIM_TIME=false launch_test test/test_detection_static.launch_test.py` |
 | T6 staleness drill (Phase 4) | `test/phase4_live_session.sh estimated 90 <out> t6` + `test/phase4_capture_stats.py t6 <capture>` |
 | §9.6 containment calibration | `test/phase4_containment.py` on `phase4_obstacles_dump.py` replays |
 | §17.3 offline A/B (one command) | `test/phase4_ab_run.sh <out>` (needs fixtures + `simulate/build_ros2/ab_eval`) |

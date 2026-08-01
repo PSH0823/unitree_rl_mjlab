@@ -1,0 +1,30 @@
+diff --git a/src/dlio/odom.cc b/src/dlio/odom.cc
+index 4e9f190..e2a70dc 100755
+--- a/src/dlio/odom.cc
++++ b/src/dlio/odom.cc
+@@ -34,7 +34,14 @@ dlio::OdomNode::OdomNode() : Node("dlio_odom_node") {
+   this->lidar_cb_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+   auto lidar_sub_opt = rclcpp::SubscriptionOptions();
+   lidar_sub_opt.callback_group = this->lidar_cb_group;
+-  this->lidar_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>("pointcloud", 1,
++  // 7.1 QoS contract (DPCBF perception): the cloud stream is SensorData
++  // (best-effort). Upstream subscribes Reliable, which never matches a
++  // best-effort cloud publisher - our sim sidecar and every bag recorded
++  // from it - so DLIO would sit silent with the topic "connected".
++  // Depth stays 1: DLIO wants the freshest scan, not a backlog.
++  // Recorded patch 0006; upstreamable.
++  this->lidar_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>("pointcloud",
++      rclcpp::SensorDataQoS().keep_last(1),
+       std::bind(&dlio::OdomNode::callbackPointCloud, this, std::placeholders::_1), lidar_sub_opt);
+ 
+   this->imu_cb_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+@@ -43,7 +50,8 @@ dlio::OdomNode::OdomNode() : Node("dlio_odom_node") {
+   this->imu_sub = this->create_subscription<sensor_msgs::msg::Imu>("imu", rclcpp::SensorDataQoS(),
+       std::bind(&dlio::OdomNode::callbackImu, this, std::placeholders::_1), imu_sub_opt);
+ 
+-  this->odom_pub     = this->create_publisher<nav_msgs::msg::Odometry>("odom", 1);
++  // 7.1: /odom is Reliable depth 10 (upstream depth 1).
++  this->odom_pub     = this->create_publisher<nav_msgs::msg::Odometry>("odom", 10);
+   this->pose_pub     = this->create_publisher<geometry_msgs::msg::PoseStamped>("pose", 1);
+   this->path_pub     = this->create_publisher<nav_msgs::msg::Path>("path", 1);
+   this->kf_pose_pub  = this->create_publisher<geometry_msgs::msg::PoseArray>("kf_pose", 1);

@@ -4,9 +4,10 @@ ros2 launch g1_perception_bringup bringup.launch.py \
     source:=sim|hw mode:=oracle|shadow|estimated ground_seg:=off|patchwork \
     viz:=off|rviz record:=off|on
 
-Phase 0/1 scope: source_sim, description, viz, record are functional; the
-perception container is an empty shell until Phase 2; source_hw is a Phase 5
-placeholder; `mode` is plumbed through for the Phase 4 adapter.
+Phase 5A: source_hw is functional (livox_ros_driver2 + DLIO) and
+`use_sim_time` now defaults FALSE when source:=hw — the one place the sim/hw
+difference is expressed, keeping perception.launch.py conditional-free (D4).
+`mode` is plumbed through for the Phase 4 adapter.
 """
 import os
 
@@ -15,7 +16,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import LaunchConfigurationEquals
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 
 
 def _include(name, condition=None, **launch_args):
@@ -43,8 +44,14 @@ def generate_launch_description():
                               choices=['off', 'rviz']),
         DeclareLaunchArgument('record', default_value='off',
                               choices=['off', 'on']),
-        # sim time follows the source unless overridden
-        DeclareLaunchArgument('use_sim_time', default_value='true'),
+        # Sim time follows the source unless explicitly overridden. This is
+        # THE place the sim/hw difference is allowed to live (D4): sim runs on
+        # simulate's /clock, hardware has none, and a node left at
+        # use_sim_time:=true on hardware simply never advances its clock.
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value=PythonExpression(
+                ["'true' if '", source, "' == 'sim' else 'false'"])),
 
         _include('source_sim.launch.py',
                  condition=LaunchConfigurationEquals('source', 'sim')),

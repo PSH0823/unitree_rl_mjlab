@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>livox_sdk2_vendor</name>
+  <version>0.1.0</version>
+  <description>
+    Builds and installs Livox-SDK2 (pinned in deps.repos, tag v1.3.1) into the
+    workspace prefix. Livox-SDK2 is plain CMake with no package.xml, so colcon
+    cannot build it directly; livox_ros_driver2 find_library()s
+    liblivox_lidar_sdk_shared.so and find_path()s livox_lidar_api.h, both of
+    which this package puts on CMAKE_PREFIX_PATH. Upstream's own instructions
+    install to /usr/local, which this machine cannot do (no sudo) and which
+    would escape the pinned-workspace discipline anyway.
+  </description>
+  <maintainer email="joan0219@yonsei.ac.kr">Seohyeon Lim</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -11,6 +11,15 @@ time) is what Phase 3 inherits for T4/T5/T8.
 Standalone:
   launch_test src/g1_perception/g1_perception_bringup/test/test_projection_replay.launch_test.py
 """
+
+# Concurrent launch tests share topic names; give this one a private DDS
+# domain before anything else touches ROS (see isolate_domain.py).
+# launch_test loads this file by path without putting its directory on
+# sys.path, so the sibling import needs the insert first.
+import os as _os, sys as _sys  # noqa: E402
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))  # noqa: E402
+import isolate_domain  # noqa: E402
+isolate_domain.isolate(isolate_domain.PROJECTION_REPLAY)  # noqa: E402
 import math
 import os
 import threading

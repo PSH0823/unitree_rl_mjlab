@@ -15,6 +15,15 @@ test_fixtures/README.md).
 Standalone:
   launch_test src/g1_perception/g1_perception_bringup/test/test_detection_static.launch_test.py
 """
+
+# Concurrent launch tests share topic names; give this one a private DDS
+# domain before anything else touches ROS (see isolate_domain.py).
+# launch_test loads this file by path without putting its directory on
+# sys.path, so the sibling import needs the insert first.
+import os as _os, sys as _sys  # noqa: E402
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))  # noqa: E402
+import isolate_domain  # noqa: E402
+isolate_domain.isolate(isolate_domain.DETECTION_STATIC)  # noqa: E402
 import math
 import os
 import threading
@@ -30,10 +39,28 @@ WS = os.path.abspath(os.path.join(HERE, '..', '..', '..', '..'))
 BAG = os.path.join(WS, 'test_fixtures', 's1_surveyed')
 
 SKIP_REASON = None
-if not os.path.isdir(BAG):
-    SKIP_REASON = f'fixture bag missing: {BAG} (gitignored; see README)'
 
-# GT: cylinders r=0.15, faces at 1/2/3 m, bearings 45/135/-45 deg
+# --- one harness, two worlds (D4; Phase 5A) --------------------------------
+# By default this is the sim T4 gate on the committed s1_surveyed fixture.
+# Point it at a hardware session instead with:
+#
+#   T4_BAG=<bag dir> T4_LAYOUT=<layout.yaml> T4_USE_SIM_TIME=false \
+#     launch_test test/test_detection_static.launch_test.py
+#
+# layout.yaml (surveyed, odom frame — see doc/phase5b_checklists.md block 5):
+#   match_radius: 0.5          # optional, defaults to §17.2's 0.5 m
+#   targets:
+#     - {name: cyl_1m, x: 0.813, y: 0.813, r: 0.15}
+#     - {name: blocker_2m, x: -1.52, y: 1.52, r: 0.30}
+#
+# Per-target radii are honoured, so a layout mixing r=0.15 with r>=0.30 props
+# measures the Phase-4 "radius bias grows with radius" finding directly: the
+# per-target true_radius error is printed for every target, not just gated.
+BAG = os.environ.get('T4_BAG', BAG)
+USE_SIM_TIME = os.environ.get('T4_USE_SIM_TIME', 'true')
+_LAYOUT = os.environ.get('T4_LAYOUT', '')
+
+# Default GT: cylinders r=0.15, faces at 1/2/3 m, bearings 45/135/-45 deg
 # (test_fixtures/scenarios/make_scenario_scene.py)
 GT = {
     's1_cyl_1m': (1.15 * math.cos(math.radians(45)),
@@ -43,8 +70,19 @@ GT = {
     's1_cyl_3m': (3.15 * math.cos(math.radians(-45)),
                   3.15 * math.sin(math.radians(-45))),
 }
-GT_R = 0.15
+GT_R = {name: 0.15 for name in GT}
 MATCH_R = 0.5        # §17.2 NN matching radius
+
+if _LAYOUT:
+    import yaml as _yaml
+    with open(_LAYOUT) as _f:
+        _spec = _yaml.safe_load(_f)
+    GT = {t['name']: (float(t['x']), float(t['y'])) for t in _spec['targets']}
+    GT_R = {t['name']: float(t['r']) for t in _spec['targets']}
+    MATCH_R = float(_spec.get('match_radius', MATCH_R))
+
+if not os.path.isdir(BAG):
+    SKIP_REASON = f'fixture bag missing: {BAG} (gitignored; see README)'
 CENTER_TOL = 0.10    # T4
 RADIUS_TOL = 0.05    # T4, pre-inflation (true_radius)
 LATENCY_FRAMES = 2   # T4
@@ -62,7 +100,8 @@ def generate_test_description():
     return launch.LaunchDescription([
         launch.actions.IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(launch_dir, 'perception.launch.py'))),
+                os.path.join(launch_dir, 'perception.launch.py')),
+            launch_arguments=[('use_sim_time', USE_SIM_TIME)]),
         launch.actions.TimerAction(
             period=4.0,
             actions=[launch.actions.ExecuteProcess(
@@ -134,7 +173,7 @@ class TestDetectionStatic(unittest.TestCase):
                     if d < bd:
                         best, bd = name, d
                 if best:
-                    err[best].append((bd, c.true_radius - GT_R))
+                    err[best].append((bd, c.true_radius - GT_R[best]))
                 elif math.hypot(c.center.x, c.center.y) < P_MAX:
                     extras += 1
         return err, extras
@@ -166,6 +205,12 @@ class TestDetectionStatic(unittest.TestCase):
             re = [e[1] for e in err[name]]
             mean_ce = sum(ce) / len(ce)
             mean_re = sum(re) / len(re)
+            # Printed per target so a mixed-radius layout shows the Phase-4
+            # radius-dependent bias directly (r>=0.30 props, 5B block 5).
+            print(f'T4 {name} (r_gt {GT_R[name]:.2f}): center mean '
+                  f'{mean_ce * 1e3:+.1f} mm max {max(ce) * 1e3:.1f} mm; '
+                  f'true_radius mean {mean_re * 1e3:+.1f} mm '
+                  f'({len(ce)} observations)')
             self.assertLess(mean_ce, CENTER_TOL,
                             f'{name} center error {mean_ce:.3f} m')
             self.assertLess(abs(mean_re), RADIUS_TOL,
