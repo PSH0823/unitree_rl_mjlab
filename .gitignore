@@ -1,7 +1,12 @@
 *.egg-info
+__pycache__/
+*.py[cod]
+.pytest_cache
 .idea
 outputs
 logs
+log/
+deploy/robots/*/log/
 wandb
 MUJOCO_LOG.TXT
 deploy/robots/go2/build

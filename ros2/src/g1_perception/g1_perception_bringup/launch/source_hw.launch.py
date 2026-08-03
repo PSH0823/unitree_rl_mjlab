@@ -11,6 +11,10 @@ Arguments
   map:=off|on         also run DLIO's mapping node (extra CPU, not needed
                       for DPCBF: perception consumes odom + TF only)
   driver_config:=<path>  MID360_config.json override (default: our config)
+  dlio_config:=<path>    DLIO parameter file override (default: our config).
+                      Its extrinsics are DERIVED from g1_mid360.xacro and
+                      guarded by t7_hw_extrinsic_guard.py; an override that
+                      has not been through that guard is unguarded.
 
 Not covered here, deliberately: DDS interface pinning (CYCLONEDDS_URI must
 name the robot's LiDAR-facing NIC, §12.2 — process environment, not launch)
@@ -32,6 +36,7 @@ _CONFIG = os.path.join(
 
 def generate_launch_description():
     driver_config = LaunchConfiguration('driver_config')
+    dlio_config = LaunchConfiguration('dlio_config')
 
     # livox_ros_driver2 (§5.6). Params: livox_driver.yaml + the JSON path,
     # injected here so the two cannot drift apart. The node publishes
@@ -59,7 +64,7 @@ def generate_launch_description():
         name='dlio_odom_node',
         output='screen',
         condition=LaunchConfigurationEquals('lio', 'dlio'),
-        parameters=[os.path.join(_CONFIG, 'dlio.yaml'), {'use_sim_time': False}],
+        parameters=[dlio_config, {'use_sim_time': False}],
         remappings=[
             ('pointcloud', '/livox/lidar'),
             ('imu', '/livox/imu'),
@@ -78,7 +83,7 @@ def generate_launch_description():
         name='dlio_map_node',
         output='screen',
         condition=IfCondition(LaunchConfiguration('map')),
-        parameters=[os.path.join(_CONFIG, 'dlio.yaml'), {'use_sim_time': False}],
+        parameters=[dlio_config, {'use_sim_time': False}],
         remappings=[('keyframes', '/dlio/pointcloud/keyframe')],
     )
 
@@ -94,6 +99,11 @@ def generate_launch_description():
             default_value=os.path.join(_CONFIG, 'MID360_config.json'),
             description='Mid360 network config; IPs are Q-1 placeholders '
                         'until the robot session (see test/hw_config_check.py)'),
+        DeclareLaunchArgument(
+            'dlio_config',
+            default_value=os.path.join(_CONFIG, 'dlio.yaml'),
+            description='DLIO parameters; extrinsics are derived from '
+                        'g1_mid360.xacro (t7_hw_extrinsic_guard.py)'),
         livox,
         dlio_odom,
         dlio_map,

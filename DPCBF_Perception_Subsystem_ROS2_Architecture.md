@@ -1746,3 +1746,128 @@ the reason the gate was split in two: **under `estimated` the constraint layers
 are indicative, not authoritative** — for oracle-arm forensics, drive them from
 the 1 kHz capture through `boundary_check`, where the geometry is bit-exact,
 and use the live view to know where to look.
+
+---
+
+### 2026-08-03 — Phase 5C (between 5A and 5B): first-hardware deployment preparation — documentation, diagnostics, isolation, gates
+
+- **Objective:** make a **supervised first sensor session on a real G1**
+  executable by an operator who has never used one, and stop deliberately at
+  perception-only inference. Not a §18 phase and not a feature block: no
+  detector tuning, no controller integration, and **no DPCBF actuation** —
+  `/obstacles_safe` is published on hardware and consumed by nobody. The bar
+  was that a first-time operator can answer, from the repository alone, every
+  question in §13 of the phase brief (which computer, which interface, which
+  IPs, how to launch the LiDAR alone, how to check TF *at the cloud stamp*,
+  which parameters are uncalibrated, what aborts the run, why walking is not
+  yet allowed).
+
+- **The framing that produced the work.** 5A left the hardware path *built*
+  and *stub-tested*; nothing about it had touched a robot. The failure this
+  phase is designed against is treating "it builds / a launch file exists / a
+  synthetic stub passes / the topic is in `ros2 topic list`" as evidence about
+  a G1. So the audit labels every claim **[src] / [test] / [hw] / [not
+  measured] / [blocked]**, and **no row anywhere carries [hw]**. That is the
+  honest state, and it is now written down rather than implied.
+
+- **Documents (new):**
+  - `ros2/doc/g1_hardware_preflight.md` — what must be known before the robot
+    is powered: G1 platform (19 items with the command for each), Mid-360 (15
+    items), a network-topology diagram plus a **fill-in interface-assignment
+    table**, the one-NIC question, the perception-on-Orin-vs-workstation
+    decision *with its consequence for every later measurement*, an explicit
+    safety-prerequisite checklist, **why this phase stops short of DPCBF
+    walking** (four missing things, named), and the table of parameters that
+    are **not calibrated for hardware**.
+  - `ros2/doc/g1_hardware_code_audit.md` — the source path edge by edge
+    (package, executable, launch, remap, type, rate, frame, both QoS ends,
+    timestamp source, config file, verification status), target-architecture
+    build readiness per package, **dead-or-misleading configuration (16
+    items)**, and the existing-vs-missing test matrix.
+  - `ros2/doc/g1_first_perception_experiment.md` — stages 0–14, each with
+    purpose / preconditions / exact commands / expected output / success
+    criterion / failure symptoms / stop condition / files to save, plus the
+    session-artefact layout, the machine-readable summary schema, the shutdown
+    block, a first-time-operator Q&A table, and the **design-only** §9 for the
+    later DPCBF phase (RobotState source, command seam, time domain, hardware
+    shadow mode).
+
+- **Tools (new, all non-actuating, all installed into `lib/<pkg>/`):**
+  `scripts/g1_hw_preflight.sh` (read-only preflight; **hard-fails on
+  placeholder network configuration**, on a loopback CycloneDDS pin, on
+  source-vs-installed drift, and on a failing extrinsic guard; exit 0/1/2, and
+  every FAIL line names the experiment stage it blocks);
+  `scripts/hw_source_probe.py` (`/livox/*` only — rate, arrival gaps,
+  frame_id, PointCloud2 layout against the pinned driver's 7-field/step-26
+  record, **stamp monotonicity**, **host-vs-device clock domain**, point
+  geometry, IMU plausibility, QoS match; JSON + text);
+  `scripts/hw_tf_probe.py` (**stamped** lookups for the four §8.2 pairs at
+  every LiDAR message stamp, with extrapolation-direction classification);
+  `scripts/hw_diagnostics.py` (one `/diagnostics` array at 1 Hz over the whole
+  chain, plus self-hit / floor-artefact / timestamp-domain tripwires marked
+  `heuristic` in their own key-values);
+  `scripts/hw_session_metadata.py` + `scripts/hw_record.sh` (bag provenance:
+  commit, arch, DDS environment, **checksums of the YAMLs actually loaded**,
+  and a report of which operator-only fields are still blank);
+  `scripts/config_diff.py` (which copy of every launch/config/rviz file is
+  live, including **stale installed artefacts** that survive a rebuild);
+  `scripts/hw_probe_core.py` (the ROS-free analysis core the probes and the
+  test share — the judgements are testable on a machine with no LiDAR).
+
+- **Launch (new/changed):** `launch/g1_perception_hardware_only.launch.py` —
+  one perception-only entry point exposing exactly `use_rviz`, `record`,
+  `voxel`, `lidar_config`, `dlio_config`, `rviz_config` (+ `driver`, `lio`,
+  `bag_path`, `diagnostics`) and **deliberately no `mode`, no `ground_seg`,
+  no `use_sim_time`**; `launch/record_hw.launch.py` (hardware topic list +
+  metadata sidecar, replacing the sim-era combined list for hardware use);
+  `source_hw.launch.py` gains `dlio_config`; **`bringup.launch.py` now REJECTS
+  `ground_seg:=patchwork`** with an explanation instead of silently ignoring
+  it. Runtime behaviour changed in exactly one place: that rejection. Rebuild
+  required for all of it (installed artefacts).
+
+- **Gate (new): CTest `hw_offline_gates`** — 283 assertions, no fixture bag,
+  no device, no rclpy, so it is a HARD gate with nothing to skip on. It
+  covers placeholder-IP rejection, unassigned-host-IP rejection,
+  source-vs-installed drift *and* stale-artefact detection, the
+  **perception-only launch closure containing no `g1_ctrl`/`deploy`/
+  `unitree_*`/`dpcbf_ros_adapter` node and no command topic in any process
+  command** (walked by AST, not grep — these files legitimately *discuss* what
+  they must not do), the TF probe being stamped rather than latest, the probe
+  core's regression/frame/layout/clock/IMU detections, recording-metadata
+  completeness, the `ground_seg` rejection, construction of every hardware
+  launch, and the diagnostics **no-data-is-ERROR** rule.
+
+- **Verified this session, on the dev machine:** `hw_offline_gates` 283/283;
+  `g1_hw_preflight.sh` exits **2** with the expected placeholder stop (the
+  correct dev-machine answer) and its other 8 sections pass, including the
+  T7-hw extrinsic guard; `config_diff.py` PASS; `hw_source_probe.py` against a
+  synthetic driver-format publisher (10.00 Hz measured, layout accepted with
+  zero deviations, `clock_domain` correctly classified host-clock, geometry
+  sampled); `hw_tf_probe.py` correctly reporting 0 % stamped-lookup success
+  and classifying the failures as connectivity when no odometry runs;
+  `hw_diagnostics.py` publishing all 13 rows with `NO DATA` ERRORs on the
+  absent half of the chain. **A `byte`-vs-`int` bug in the diagnostics level
+  field was found and fixed by running the node, not by reading it.**
+
+- **Explicitly NOT done, and not claimed:** no real Mid-360, G1, onboard PC,
+  IMU, DLIO odometry, self-hit data or hardware latency measurement; no
+  on-target build (the aarch64 emulated 10-of-18 result is **not** presented
+  as a validation anywhere); no DPCBF hardware command path; no parameter
+  tuned from simulation data and presented as hardware-valid; `dpcbf/`,
+  `deploy/`, `simulate/`, `src/`, `scripts/` untouched.
+
+- **Complete outside-`ros2/` edit list: this §21 entry, and nothing else.**
+
+#### Follow-ups
+
+**New:** the three gates the first session must clear before anything else is
+worth doing are unchanged from 5B and are now blocking in the tooling — Q-1
+answered (target arch, onboard PC, network), a **successful on-target build**,
+and this robot's IPs in `MID360_config.json`. Two smaller ones surfaced here:
+the pinned Livox driver's shutdown behaviour on a *successful* bind is
+unobserved (only the bind-failure path is characterised, and it ignores
+SIGINT/SIGTERM), so "launch shutdown is clean" is the one row of the test
+matrix that is honestly marked hardware-required rather than tested; and
+`config/dpcbf_ros_adapter.yaml` is loaded by nothing at all — left in place as
+the Appendix-A record, but it is now documented as dead rather than looking
+active. **Carried unchanged:** everything in the previous blocks.

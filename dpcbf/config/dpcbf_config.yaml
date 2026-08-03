@@ -1,17 +1,37 @@
 dynamic_obstacles:
   enabled: true
-  count: 90
+  count: 20
+
+  # Obstacle geometry:
+  #   cylinder - the abstraction the DPCBF maths assumes.
+  #   human    - a standing pedestrian (capsules + ellipsoids, 14 geoms), the
+  #              shape this pipeline actually has to handle. Sizes come from the
+  #              `human` block below; `radius_range`, `rgba` and `height` apply
+  #              to cylinders only. The radius handed to DPCBF becomes the
+  #              circumscribed radius of the body (~0.151 * standing height,
+  #              i.e. 0.26 m at 1.75 m), so tracking accuracy is measured
+  #              against the widest point, not the torso.
+  shape: cylinder
 
   # A radius and a constant speed are sampled once per obstacle at startup.
-  radius_range: [0.2, 0.3]         # meters
-  speed_range: [0.0, 0.8]          # meters/second
-  collision_enabled: true          # physical contact between robot and cylinders
-  rgba: [0.1, 0.4, 1.0, 0.45]      # translucent blue
-  height: 1.5                      # meters
+  radius_range: [0.2, 0.3]         # meters (cylinder only)
+  speed_range: [0.0, 0.3]          # meters/second
+  collision_enabled: true          # physical contact between robot and obstacles
+  rgba: [0.1, 0.4, 1.0, 0.45]      # translucent blue (cylinder only)
+  height: 1.5                      # meters (cylinder height; also arena wall height)
   random_seed: 42                  # same value reproduces the same obstacle set
 
+  human:
+    height_range: [1.60, 1.85]     # standing height, meters; the whole body scales with it
+    rgba: [0.85, 0.55, 0.40, 1.0]
+    # Yaw follows the walking direction (and turns on a wall bounce). Matters
+    # because a person is ~0.50 m across the shoulders but only ~0.24 m deep,
+    # so the fitted circle changes with aspect angle. Set false to freeze the
+    # random spawn heading instead.
+    face_travel_direction: true
+
   arena:
-    size: [20.0, 20.0]             # width (x), depth (y), meters
+    size: [10.0, 10.0]             # width (x), depth (y), meters
     # G1 starts at (0, 0). With this center, the arena spans x=[1, 11]
     # and y=[-5, 5], so the robot starts 1 m outside the left boundary.
     center: [0.0, 0.0]
@@ -57,7 +77,7 @@ qp_parameters:
   obstacle_priority: 1
 
   # exponential CBF (eCBF) parameters for distance between robot and obstacles
-  ecbf_enabled: true
+  ecbf_enabled: false
   alpha_ecbf: 100.0
   # Optimal-Decay CBF (ODCBF) parameters
   odcbf_enabled: false

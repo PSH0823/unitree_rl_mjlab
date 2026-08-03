@@ -11,6 +11,22 @@ install(PROGRAMS
         test/hw_source_stub.py
         test/selfhit_analysis.py
         DESTINATION lib/${PROJECT_NAME})
+# Phase 5C: the first-hardware-session toolkit. Same reasoning as above —
+# these must be runnable as `ros2 run g1_perception_bringup <x>` on the G1
+# onboard PC, which may only have the install prefix. hw_probe_core.py is not
+# an entry point but is imported by the two probes and by the offline gate,
+# so it is installed alongside them (they insert their own directory on
+# sys.path rather than relying on PYTHONPATH).
+install(PROGRAMS
+        scripts/g1_hw_preflight.sh
+        scripts/hw_record.sh
+        scripts/hw_probe_core.py
+        scripts/hw_source_probe.py
+        scripts/hw_tf_probe.py
+        scripts/hw_diagnostics.py
+        scripts/hw_session_metadata.py
+        scripts/config_diff.py
+        DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   # Integration smoke (§16.1): needs the ROS2-enabled simulator running;
@@ -53,6 +69,16 @@ if(BUILD_TESTING)
   add_test(NAME hw_config_check
            COMMAND /usr/bin/python3 ${CMAKE_CURRENT_SOURCE_DIR}/test/hw_config_check.py)
   set_tests_properties(hw_config_check PROPERTIES SKIP_RETURN_CODE 2)
+  # Phase 5C: everything about the hardware path that is assertable WITHOUT a
+  # robot — placeholder-IP rejection, source-vs-installed drift, the
+  # perception-only launch containing no actuation path, the TF probe being
+  # stamped, the probe core's failure detections, recording-metadata
+  # completeness, the ground_seg:=patchwork rejection, and the diagnostics
+  # no-data rule. A HARD gate: it needs no fixture bag and no device, so
+  # there is nothing for it to skip on. Hardware-dependent checks are in
+  # doc/g1_first_perception_experiment.md and are run by hand on the robot.
+  add_test(NAME hw_offline_gates
+           COMMAND /usr/bin/python3 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_hw_offline_gates.py)
 endif()
 
 ament_package()

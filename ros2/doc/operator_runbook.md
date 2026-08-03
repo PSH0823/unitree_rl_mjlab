@@ -1224,6 +1224,29 @@ adapter's mode, staleness state and `GetObstacles` latency histogram.
 
 ## 8. Hardware path, without hardware
 
+> **Going to the robot?** This section is the *dev-machine* view. The robot
+> session has three documents of its own, and they are the ones to read:
+>
+> | Document | For |
+> |---|---|
+> | [`g1_hardware_preflight.md`](g1_hardware_preflight.md) | what you must find out **before** the robot is powered — platform, LiDAR, network topology, safety prerequisites, and the list of parameters that are *not* calibrated for hardware |
+> | [`g1_hardware_code_audit.md`](g1_hardware_code_audit.md) | what the hardware path actually contains, edge by edge, with every claim labelled verified-from-source / verified-by-test / **not measured** / blocked |
+> | [`g1_first_perception_experiment.md`](g1_first_perception_experiment.md) | the staged session itself (stages 0–14), each with purpose, preconditions, exact commands, expected output, success criterion, failure symptoms, stop condition and files to save |
+> | [`phase5b_checklists.md`](phase5b_checklists.md) | the block-structured capture plan the stages above expand on; still the authority on props, survey convention and per-block bags |
+>
+> The Phase-5C toolkit, all non-actuating, all runnable as
+> `ros2 run g1_perception_bringup <name>`:
+>
+> | Tool | Does |
+> |---|---|
+> | `g1_hw_preflight.sh` | read-only preflight: arch, ROS/DDS environment, executables, installed files, **source-vs-installed drift**, Mid-360 config, placeholder-IP hard stop, routes, the extrinsic guard, disk. Exit 0/1/2 |
+> | `hw_source_probe.py` | `/livox/{lidar,imu}` only: rate, gaps, frame_id, point layout, **stamp monotonicity**, **host-vs-device clock**, geometry, QoS match. JSON + text |
+> | `hw_tf_probe.py` | TF availability **at each LiDAR message stamp** (never latest) for the four §8.2 pairs, with extrapolation classification |
+> | `hw_diagnostics.py` | one `/diagnostics` array at 1 Hz covering the whole chain; ERROR on no-data rather than silence |
+> | `hw_session_metadata.py` | provenance next to a bag; reports the operator fields still blank |
+> | `hw_record.sh` | bag + environment dump + checksums + metadata in one command |
+> | `config_diff.py` | which copy of every launch/config/rviz file is actually live |
+
 ### 8.1 Preflight
 
 ```bash
@@ -1296,6 +1319,35 @@ cache-shadowing bug stops the rest, and
 `tools/diagnose_ament_export_libraries.py` exists to recognise it —
 **diagnostic only, no workaround has been shown correct.** Read both before the
 session, not during it.
+
+### 8.5 The perception-only hardware launch
+
+```bash
+ros2 launch g1_perception_bringup g1_perception_hardware_only.launch.py \
+    driver:=on lio:=dlio use_rviz:=true record:=on
+```
+
+One entry point for the whole hardware chain — driver, DLIO, robot TF,
+`base_footprint`, the perception container, diagnostics, optional RViz and an
+optional metadata-stamped bag — **and nothing else**. It contains no `mode`
+argument, no `ground_seg` argument and no `use_sim_time` argument, because
+none of the three has a meaning in a session with no DPCBF and no `/clock`.
+
+`test_hw_offline_gates.py` (CTest `hw_offline_gates`) walks the launch closure
+by AST on every build and asserts that it constructs no node from `g1_ctrl`,
+`deploy`, `unitree_*` or `dpcbf_ros_adapter`, and no process whose command
+mentions a command topic. `dpcbf_ros_adapter` is a **static library, not a
+node**, so there is no DPCBF seam to construct; `/obstacles_safe` is published
+and consumed by nobody.
+
+On the dev machine `driver:=off lio:=off` brings up the container half alone,
+which is how the launch itself is exercised without a device.
+
+**`ground_seg:=patchwork` now raises.** It was a silent no-op — nothing ever
+read the argument, Patchwork++ is not imported/built/launched, and
+`/points_no_ground` does not exist. `bringup.launch.py` keeps the argument
+solely so an old command line gets an explanation instead of a shrug; the
+hardware launch does not have it at all.
 
 ---
 

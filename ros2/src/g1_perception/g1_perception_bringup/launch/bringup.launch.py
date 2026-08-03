@@ -13,10 +13,34 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
+                            OpaqueFunction)
 from launch.conditions import LaunchConfigurationEquals
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
+
+
+def _reject_patchwork(context, *_args, **_kwargs):
+    """`ground_seg:=patchwork` was a NO-OP: nothing in this workspace ever
+    read the argument. Patchwork++ is not in deps.repos, is not built, is not
+    launched, and `/points_no_ground` does not exist — the only thing that
+    rejects floor returns is `min_height` in pointcloud_to_laserscan.
+
+    Silently accepting the argument is worse than not having it, because it
+    lets a session believe ground segmentation was on. Phase 5C makes it an
+    explicit error rather than deleting it, so an old command line gets an
+    explanation instead of a shrug.
+    """
+    if context.launch_configurations.get('ground_seg') == 'patchwork':
+        raise RuntimeError(
+            'ground_seg:=patchwork is NOT IMPLEMENTED. Patchwork++ is not '
+            'imported (deps.repos), not built, and not launched; there is no '
+            '/points_no_ground topic and no ground-segmentation stage in '
+            'perception.launch.py. Floor returns are rejected ONLY by '
+            "pointcloud_to_laserscan's min_height (0.15 m in "
+            'base_footprint), which is a height band, not segmentation, and '
+            'is valid on flat floors only. Re-run with ground_seg:=off.')
+    return []
 
 
 def _include(name, condition=None, **launch_args):
@@ -38,8 +62,13 @@ def generate_launch_description():
                               choices=['sim', 'hw']),
         DeclareLaunchArgument('mode', default_value='oracle',
                               choices=['oracle', 'shadow', 'estimated']),
+        # Kept only so an old command line gets an explanation. `patchwork`
+        # raises below; it never did anything (see _reject_patchwork).
         DeclareLaunchArgument('ground_seg', default_value='off',
-                              choices=['off', 'patchwork']),
+                              choices=['off', 'patchwork'],
+                              description='off only — patchwork is NOT '
+                                          'implemented and is now rejected'),
+        OpaqueFunction(function=_reject_patchwork),
         DeclareLaunchArgument('viz', default_value='off',
                               choices=['off', 'rviz']),
         DeclareLaunchArgument('record', default_value='off',

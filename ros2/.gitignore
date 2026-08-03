@@ -1,8 +1,8 @@
 # External sources are pinned in deps.repos and imported with vcstool — never committed.
 src/external/
-# colcon artifacts
-build/
-install/
+# colcon artifacts (incl. per-arch out dirs: build_arm64/, install_arm64/)
+build*/
+install*/
 log/
 # bags are big — regenerate per test_fixtures/README.md; the wall_scene
 # fixture (generator + README, outputs go to /tmp) IS committed (Phase 2)
@@ -31,4 +31,3 @@ evidence/**/*.log
 evidence/**/*.jsonl
 evidence/**/*.json
 !evidence/phase5b/selfhit.json
-*.txt

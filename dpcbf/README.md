@@ -64,6 +64,68 @@ should be monitored when increasing them.
 All obstacle, robot, and QP values are loaded at process startup from
 `config/dpcbf_config.yaml`. Restart `unitree_mujoco` after changing the file.
 
+## Obstacle shape
+
+`dynamic_obstacles.shape` selects what each mocap obstacle is made of:
+
+- `cylinder` — one `mjGEOM_CYLINDER` sized from `radius_range` and `height`.
+  This is the abstraction the DPCBF maths assumes, and the historical default.
+- `human` — a standing pedestrian: 14 capsules, ellipsoids and boxes
+  (feet, shins, thighs, pelvis, abdomen, chest, shoulders, hanging arms, neck,
+  head) whose every dimension is a fraction of the person's standing height, so
+  one body plan covers `human.height_range`. The table lives in
+  `src/dynamic_obstacles.cpp` (`kHumanParts`), body-local frame: origin between
+  the feet on the ground, +x forward, +y left, +z up.
+
+Only the shape changes; the mocap-body interface does not. Each obstacle is
+still exactly one mocap body, so `nmocap`, `/sim/mj_state`, the perception
+sidecar's mirror model and the ground-truth oracle are all unaffected. Because a
+person is not axially symmetric, humans carry a yaw: it follows the walking
+direction (and turns on a wall bounce) unless `human.face_travel_direction` is
+false, in which case the random spawn heading is held.
+
+The radius handed to DPCBF is the **circumscribed** radius of the standing body,
+derived from the parts table rather than hardcoded: `0.151 * height`, so 0.26 m
+at 1.75 m. Primitives, not a mesh — they survive `mj_saveXML` into the mirror
+model with no `meshdir` fixup, they raycast on every MuJoCo-LiDAR backend, and
+14 convex geoms per person cost far less than a triangle soup.
+
+### Choosing the projection height band
+
+`human_band_probe` compiles the same spec the simulator does, isolates one
+human, and reports what each `pointcloud_to_laserscan` `[min_height,
+max_height]` band recovers — after clipping the band to what the Mid360 can
+actually reach at that range (the sensor is mounted upside down, so its
+reachable heights at horizontal distance `d` are
+`[z - d*tan(52.16deg), z + d*tan(7.21deg)]` around `z = 1.265 m`):
+
+```bash
+./simulate/build_ros2/human_band_probe \
+    src/assets/robots/unitree_g1/xmls/scene_g1.xml \
+    dpcbf/config/dpcbf_config.yaml --range 2.0
+```
+
+What it shows, and the reason the band is **not** the tuning lever it looks
+like: the hanging arms are as wide as the shoulders and span 0.46-0.79 of
+standing height, so every band from the hips to the chin returns the same
+silhouette. Measured at 2 m on a 1.80 m body (ground truth 0.271 m), the shipped
+`0.15-1.60` band and a hand-picked `1.00-1.40` torso band agree to within 3 mm
+of fitted radius. What does move the fit by 2x is **aspect angle**: facing the
+sensor gives `r_fit` 0.295 m, side-on gives 0.141 m, because a person is 0.51 m
+across and 0.24 m deep. The extractor's `radius_enlargement` (0.17 m) is what
+keeps the side-on case covering the truth (0.141 + 0.17 = 0.311 > 0.271).
+
+Two band edges do matter, and both are failure modes rather than tunings:
+
+- **`max_height` below ~0.75 m** leaves only the legs, and the gap between them
+  (0.13-0.22 m) exceeds `max_group_distance` (0.10 m) — one person is extracted
+  as **two** obstacles.
+- **`min_height` above ~1.55 m** leaves only the head, which fits a 0.10 m
+  circle, and at ranges under 2.7 m the head is above the sensor's upward FOV
+  entirely, so the obstacle vanishes.
+
+Anywhere between those, the band is inert. Keep `0.15 / 1.60`.
+
 ## Visualization
 
 Running `./simulate/build/unitree_mujoco` also opens the OpenCV window configured

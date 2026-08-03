@@ -126,4 +126,12 @@ if(UNITREE_MUJOCO_WITH_ROS2)
                        SKIP_RETURN_CODE 77 TIMEOUT 900)
 endif()
 
+# Tuning instrument for the `shape: human` obstacle field: reports what each
+# pointcloud_to_laserscan height band recovers from a standing body. It compiles
+# the same spec the simulator does, so it needs mujoco + the obstacle manager;
+# no ROS2, which is why it sits outside the guard above.
+add_executable(human_band_probe ${CMAKE_CURRENT_SOURCE_DIR}/../dpcbf/tools/human_band_probe.cc)
+target_include_directories(human_band_probe PRIVATE mujoco/include)
+target_link_libraries(human_band_probe PRIVATE dpcbf_dynamic_obstacles mujoco yaml-cpp)
+
 add_executable(jstest src/joystick/jstest.cc src/joystick/joystick.cc)

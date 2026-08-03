@@ -7,7 +7,15 @@ Colcon workspace for the perception subsystem.
 - **How to run any of this** — bring the stack up, see it in RViz, walk the
   robot, reproduce a §21 number, work out why nothing is arriving:
   **[`doc/operator_runbook.md`](doc/operator_runbook.md)**.
-- **The robot session:** [`doc/phase5b_checklists.md`](doc/phase5b_checklists.md).
+- **The robot session:** [`doc/phase5b_checklists.md`](doc/phase5b_checklists.md)
+  (block-structured capture plan) and, for a first-time G1 operator, the
+  Phase-5C trio:
+  [`doc/g1_hardware_preflight.md`](doc/g1_hardware_preflight.md) — what to
+  find out before the robot is powered;
+  [`doc/g1_hardware_code_audit.md`](doc/g1_hardware_code_audit.md) — what the
+  hardware path contains and what of it is actually verified;
+  [`doc/g1_first_perception_experiment.md`](doc/g1_first_perception_experiment.md)
+  — the staged, perception-only session (no actuation).
 
 This file is the workspace's **provenance**: what it is made of, why each
 external is pinned or patched, and how to build it. Procedures live in the
