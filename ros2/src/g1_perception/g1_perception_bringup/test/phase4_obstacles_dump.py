@@ -13,6 +13,11 @@ from obstacle_detector.msg import Obstacles
 
 TOPICS = {
     '/sim/gt_obstacles': 1,
+    # Pre-tracker detections: the KF's actual MEASUREMENTS. Their scatter on a
+    # static scene is what `measurement_variance` is supposed to be (gap G1);
+    # without them a robot-day capture cannot derive R and the sigma term
+    # stays uncalibratable. See measure_measurement_variance.py.
+    '/raw_obstacles': 5,
     '/tracked_obstacles': 5,
     '/obstacles_safe': 1,
 }
@@ -28,9 +33,14 @@ def main():
         f.write(json.dumps({
             't': m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
             'topic': topic,
+            # 'cov' = CircleObstacle.covariance [var_x, var_y, var_r] (P-3, fork
+            # patch 0007). Zero from producers that are not the tracker; kept in
+            # the dump so calibrate_k_sigma.py can run on the same capture the
+            # containment calibration uses — including 5B's hardware session.
             'circles': [{'x': c.center.x, 'y': c.center.y, 'r': c.radius,
                          'tr': c.true_radius, 'vx': c.velocity.x,
-                         'vy': c.velocity.y, 'uid': c.uid}
+                         'vy': c.velocity.y, 'uid': c.uid,
+                         'cov': list(c.covariance)}
                         for c in m.circles]}) + '\n')
 
     for topic, depth in TOPICS.items():

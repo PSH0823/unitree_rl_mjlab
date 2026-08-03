@@ -99,11 +99,37 @@ public:
   }
 
 
+  // Scripted lowering (workstream B). Interactively the band is a hoist you
+  // toggle with key 9, which is why every closed-loop session so far ran with
+  // the robot suspended — the ±0.45 m swing and free yaw the Phase-4 shadow
+  // deltas had to be attributed to. A headless walking run needs the OTHER
+  // half of the operator procedure: hold the robot while g1_ctrl's FixStand
+  // loads the legs, then LOWER it and let it stand on its own.
+  //
+  // Gain(t) is 1 until release_t_, ramps linearly to 0 over release_ramp_ and
+  // stays 0 — the sim analogue of paying out the strap, not of cutting it.
+  // Both are sim-time, set only by env UNITREE_MUJOCO_BAND_RELEASE="t0[,ramp]"
+  // and UNITREE_MUJOCO_BAND_LENGTH; unset leaves the stock hoist untouched.
+  double Gain(double t) const
+  {
+    if (release_t_ < 0.0) return 1.0;               // never released (stock)
+    if (t <= release_t_) return 1.0;
+    if (release_ramp_ <= 0.0) return 0.0;
+    const double g = 1.0 - (t - release_t_) / release_ramp_;
+    return g > 0.0 ? g : 0.0;
+  }
+  bool Released(double t) const
+  {
+    return release_t_ >= 0.0 && t > release_t_ + release_ramp_;
+  }
+
   double stiffness_ = 200;
   double damping_ = 100;
   std::vector<double> point_ = {0, 0, 3};
   double length_ = 0.0;
   bool enable_ = true;
+  double release_t_ = -1.0;    // <0: never (stock behaviour)
+  double release_ramp_ = 1.0;  // s
   std::vector<double> f_ = {0, 0, 0};
 };
 inline ElasticBand elastic_band;
@@ -567,6 +593,17 @@ namespace
                 // elastic band on base link
                 if (param::config.enable_elastic_band == 1)
                 {
+                  if (elastic_band.enable_ && elastic_band.Released(d->time))
+                  {
+                    // Latch off once the ramp has run out, so the applied
+                    // force is cleared exactly once and never re-applied.
+                    elastic_band.enable_ = false;
+                    d->xfrc_applied[param::config.band_attached_link] = 0.0;
+                    d->xfrc_applied[param::config.band_attached_link + 1] = 0.0;
+                    d->xfrc_applied[param::config.band_attached_link + 2] = 0.0;
+                    std::cout << "elastic band released at t=" << d->time
+                              << std::endl;
+                  }
                   if (elastic_band.enable_)
                   {
                     std::vector<double> x = {d->qpos[0], d->qpos[1], d->qpos[2]};
@@ -574,9 +611,10 @@ namespace
 
                     elastic_band.Advance(x, dx);
 
-                    d->xfrc_applied[param::config.band_attached_link] = elastic_band.f_[0];
-                    d->xfrc_applied[param::config.band_attached_link + 1] = elastic_band.f_[1];
-                    d->xfrc_applied[param::config.band_attached_link + 2] = elastic_band.f_[2];
+                    const double g = elastic_band.Gain(d->time);
+                    d->xfrc_applied[param::config.band_attached_link] = g * elastic_band.f_[0];
+                    d->xfrc_applied[param::config.band_attached_link + 1] = g * elastic_band.f_[1];
+                    d->xfrc_applied[param::config.band_attached_link + 2] = g * elastic_band.f_[2];
                   }
                 }
 
@@ -614,10 +652,27 @@ namespace
   // Scripted command injection (Phase-4 §0): this machine has no gamepad, so
   // with use_joystick=0 the stock bridge never wires a joystick and the
   // 1 kHz axis_filter/Filter() seam is DEAD CODE. A ScriptedJoystick plays a
-  // deterministic sim-time axis profile ("t lx ly rx" lines, piecewise-
-  // constant hold) through the exact same joystick->update() path. Test-only
-  // flag: enabled solely by env UNITREE_MUJOCO_SCRIPTED_COMMANDS=<profile>;
-  // tracked config untouched; inert when the variable is unset.
+  // deterministic sim-time profile through the exact same joystick->update()
+  // path. Test-only flag: enabled solely by env
+  // UNITREE_MUJOCO_SCRIPTED_COMMANDS=<profile>; tracked config untouched;
+  // inert when the variable is unset.
+  //
+  // Profile line: "t lx ly rx [buttons]", piecewise-constant hold. `buttons`
+  // is an optional comma-separated list of key names held from that breakpoint
+  // until the next; "-" or absent means none. Button support (interim block)
+  // is what lets a scripted run drive g1_ctrl's FSM, whose transitions are
+  // chords: L2+up -> FixStand, R2+A -> RLBase (deploy/robots/g1/main.cpp).
+  // Names follow g1_pub.h's wireless_remote packing, where the FSM's "L2"/"R2"
+  // are the joystick's LT/RT *axes*, not buttons — so those are driven to 1.0
+  // (Axis::threshold is 0.5) and everything else is a Button<int>.
+  //
+  //   # t    lx   ly   rx   buttons
+  //   0.0    0.0  0.0  0.0  -
+  //   3.0    0.0  0.0  0.0  L2,up      <- enter FixStand
+  //   3.5    0.0  0.0  0.0  -
+  //   6.0    0.0  0.0  0.0  R2,A       <- enter RLBase
+  //   6.5    0.0  0.0  0.0  -
+  //   8.0    0.3  0.0  0.0  -          <- walk forward
   class ScriptedJoystick : public unitree::common::UnitreeJoystick
   {
   public:
@@ -638,7 +693,10 @@ namespace
         if (line.empty() || line[0] == '#') continue;
         std::istringstream ss(line);
         Point p{};
-        if (ss >> p.t >> p.lx >> p.ly >> p.rx) points_.push_back(p);
+        if (!(ss >> p.t >> p.lx >> p.ly >> p.rx)) continue;
+        std::string keys;
+        if (ss >> keys && keys != "-") p.keys = ParseKeys(keys, profile_path);
+        points_.push_back(p);
       }
       std::cout << "ScriptedJoystick: " << points_.size()
                 << " breakpoints from " << profile_path << std::endl;
@@ -650,6 +708,47 @@ namespace
         ly.smooth = 1.0f;
         rx.smooth = 1.0f;
       }
+      // L2/R2 are Axis, and Axis's default smooth of 0.03 would take ~50
+      // updates to cross the 0.5 press threshold — long enough that a short
+      // scripted chord would never register. A scripted press is exact.
+      LT.smooth = 1.0f;
+      RT.smooth = 1.0f;
+    }
+
+    // Bit index per key name, in the order Apply() writes them.
+    enum Key { kL2, kR2, kL1, kR1, kA, kB, kX, kY,
+               kUp, kDown, kLeft, kRight, kStart, kSelect, kNumKeys };
+
+    static uint32_t ParseKeys(const std::string& spec,
+                              const std::string& profile_path)
+    {
+      static const std::pair<const char*, Key> kNames[] = {
+          {"L2", kL2}, {"R2", kR2}, {"L1", kL1}, {"R1", kR1},
+          {"LT", kL2}, {"RT", kR2}, {"LB", kL1}, {"RB", kR1},
+          {"A", kA}, {"B", kB}, {"X", kX}, {"Y", kY},
+          {"up", kUp}, {"down", kDown}, {"left", kLeft}, {"right", kRight},
+          {"start", kStart}, {"select", kSelect}, {"back", kSelect}};
+      uint32_t mask = 0;
+      std::istringstream ks(spec);
+      std::string name;
+      while (std::getline(ks, name, ','))
+      {
+        if (name.empty()) continue;
+        bool found = false;
+        for (const auto& kv : kNames)
+        {
+          if (name == kv.first) { mask |= 1u << kv.second; found = true; break; }
+        }
+        if (!found)
+        {
+          // A typo'd key silently doing nothing is exactly how a scripted FSM
+          // run turns into an unexplained "the robot never stood up".
+          std::cerr << "ScriptedJoystick: unknown key '" << name << "' in "
+                    << profile_path << std::endl;
+          exit(1);
+        }
+      }
+      return mask;
     }
 
     void update() override
@@ -658,16 +757,28 @@ namespace
       // the bridge's own mjData reads (R-9, not worsened).
       const double t = d ? d->time : 0.0;
       std::array<float, 3> axes{0.0f, 0.0f, 0.0f};
+      uint32_t keys = 0;
       for (const auto& p : points_)
       {
         if (p.t > t) break;
         axes = {p.lx, p.ly, p.rx};
+        keys = p.keys;
       }
       if (axis_filter_) axes = axis_filter_(axes[0], axes[1], axes[2]);
       lx(axes[0]);
       ly(axes[1]);
       rx(axes[2]);
       ry(0.0f);
+      // The chord keys are NOT routed through axis_filter_: DPCBF gates
+      // locomotion commands, not mode changes (§10.5).
+      const auto held = [keys](Key k) { return (keys >> k) & 1u; };
+      LT(held(kL2) ? 1.0f : 0.0f);
+      RT(held(kR2) ? 1.0f : 0.0f);
+      LB(held(kL1)); RB(held(kR1));
+      A(held(kA));   B(held(kB));   X(held(kX));    Y(held(kY));
+      up(held(kUp)); down(held(kDown));
+      left(held(kLeft)); right(held(kRight));
+      start(held(kStart)); back(held(kSelect));
     }
 
   private:
@@ -675,6 +786,7 @@ namespace
     {
       double t;
       float lx, ly, rx;
+      uint32_t keys = 0;
     };
     std::vector<Point> points_;
     JoystickAxisFilter axis_filter_;
@@ -923,6 +1035,23 @@ void *UnitreeSdk2BridgeThread(void *arg)
     interface = std::make_unique<G1Bridge>(m, d, axis_filter);
   } else {
     interface = std::make_unique<Go2Bridge>(m, d, axis_filter);
+  }
+
+  // Scripted band lowering (see ElasticBand::Gain above). Test-only, sim-time,
+  // inert unless set — same discipline as the scripted commands below.
+  if (const char* len = std::getenv("UNITREE_MUJOCO_BAND_LENGTH")) {
+    elastic_band.length_ = std::atof(len);
+  }
+  if (const char* rel = std::getenv("UNITREE_MUJOCO_BAND_RELEASE")) {
+    std::string spec(rel);
+    const auto comma = spec.find(',');
+    elastic_band.release_t_ = std::atof(spec.substr(0, comma).c_str());
+    if (comma != std::string::npos) {
+      elastic_band.release_ramp_ = std::atof(spec.substr(comma + 1).c_str());
+    }
+    std::cout << "elastic band: length " << elastic_band.length_
+              << " m, release at t=" << elastic_band.release_t_
+              << " s over " << elastic_band.release_ramp_ << " s" << std::endl;
   }
 
   // Scripted command injection (see ScriptedJoystick above): installed on

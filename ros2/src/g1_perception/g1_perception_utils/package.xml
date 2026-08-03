@@ -5,8 +5,10 @@
   <version>0.1.0</version>
   <description>
     Small TF/visualization utilities (§6.3): base_footprint_publisher
-    (odom->base_footprint = base_link projected to the ground plane) and
-    obstacles_marker_relay (obstacle_detector/Obstacles -> MarkerArray).
+    (odom->base_footprint = base_link projected to the ground plane),
+    obstacles_marker_relay (obstacle_detector/Obstacles -> MarkerArray) and
+    dpcbf_overlay (estimated-vs-GT obstacle overlay plus the DPCBF constraint
+    geometry, §4.6 -- the sixth marker layer, alongside the four relays).
   </description>
   <maintainer email="joan0219@yonsei.ac.kr">Seohyeon Lim</maintainer>
   <license>Apache-2.0</license>
@@ -19,6 +21,14 @@
   <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>obstacle_detector</depend>
+  <depend>nav_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>dpcbf_ros_adapter</depend>
+  <!-- Already in the workspace: dpcbf, obstacle_detector and the ROS 2
+       yaml_cpp_vendor all build against it. The overlay reads the same
+       dpcbf_config.yaml the simulator loads rather than re-declaring the
+       parameters as ROS defaults, which would let the two drift. -->
+  <depend>yaml-cpp</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 

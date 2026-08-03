@@ -526,6 +526,8 @@ Removes robot-body returns (arms swing through the Mid360's downward-sweeping FO
 Subscribes `/tracked_obstacles`, publishes `/obstacles_safe` (same msg type). Per circle:
 
 1. **Gate:** drop if `now − header.stamp > max_age (0.30 s)`; drop if `true_radius > max_circle_radius (0.60 m)` (spurious wall arcs); clamp `r ← max(true_radius, min_radius 0.20 m)`.
+
+**Where the radius bound really is [corrected 2026-08-02, workstream C gap G2].** The 0.60 m above describes *this* node, but the binding cut happens two stages earlier and was measuring a different quantity. `obstacle_extractor::detectCircles()` adds `radius_enlargement` to the fitted radius **before** testing `max_circle_radius`, so with the shipped 0.60 / 0.17 it kept a circle only if `fit < 0.43 m`; the fit over-estimates a fully visible cylinder by `+0.084·r`, so the real limit was **≈ 0.397 m of true radius** — verified against 210 analytic-ray configurations, where the rule `keep ⟺ fit + 0.17 < 0.60` reproduces all 17 non-detections and all 43 detections with no exceptions. It was also *intermittent*: truncating the visible arc shortens the chord and brings the same object back under the cut, so an over-size obstacle appears and disappears as the robot moves (r = 0.50 m is invisible at full arc and visible at 60 % arc). Fork patch 0009 moves the gate onto the fit, so `max_circle_radius` now bounds the estimated obstacle radius as this section always claimed, and both drop paths are counted and throttle-logged. **Resulting sensing limit: true radius ≲ 0.55 m** (`0.60/1.084`, fully visible; partial occlusion only extends it). Objects above that — wide pillars, pallet stacks, vehicles, walls — are outside this pipeline's circle model by design, and DPCBF is told nothing about them. The filter's own `max_circle_radius` is now a near-redundant restatement of the same bound — it still catches the one thing the extractor cannot, a radius the *tracker's* KF has carried past the extractor's own cut (observed firing at `true_radius` 0.602 m) — so keep the two config values equal.
 2. **Inflate (H-8):** `radius_safe = r + fixed (0.03 m) + k_v·|v|·latency_horizon (0.12 s)` — the σ terms activate only if P-3 lands; until then the fixed term is tuned to cover measured error (Phase 4 calibration re-derives it the way the old branch derived k_σ=2.748).
 3. **Speed sanity:** clamp `|v|` to `v_max_obstacle` (1.5 m/s; arena max 0.8) to stop KF spikes from inflating radii absurdly or aiming constraints wrongly.
 
@@ -916,6 +918,13 @@ extractor: {min_group_points: 5, max_group_distance: 0.10, distance_proportion: 
 tracker: {loop_rate: 20.0, tracking_duration: 1.0,
           process_variance: 0.0001, process_rate_variance: 0.03, measurement_variance: 1.0}
           # association gate 0.30 m, radius-residual weight 0.3, confirm_hits 3 → P-2 scope
+          # measurement_variance is R(0,0) and has units of m^2 (the KF's C = [1 0]
+          # and its measurement is a circle centre in metres). P-2 seeds P(0,0) = R,
+          # so the inherited 1.0 asserts a ONE-METRE 1-sigma LiDAR measurement and
+          # makes the published sigma ~0.58 m. It is not a unitless knob and it is
+          # not calibrated: derive it from data with
+          # g1_perception_bringup/test/measure_measurement_variance.py before any
+          # k_sigma is fitted [2026-08-02, gap G1].
 
 # safety_obstacle_filter  (H-8)
 safety: {max_age: 0.30, min_radius: 0.20, fixed_inflation: 0.03,
@@ -1204,3 +1213,536 @@ adapter: {topic: /obstacles_safe, max_age: 0.30, fade_out: 0.30, hold_after_stal
 - **Lessons learned:** "verify against the checkout, not the doc" produced eleven findings across two externals this phase, three of which (DLIO's Reliable subscription, its identity extrinsics, its `use_sim_time: true`) would each have produced a *silent* no-data or wrong-frame condition on robot day rather than an error message. A driver-output *emulator* is worth more than a device simulator for seam work: it costs 200 lines and converts "we will find out on the robot" into a CTest. And when a green test suite turns red after adding tests, suspect the harness's own concurrency before the product — the failing assertions here were T9 misses whose counts were arithmetically impossible for the bag being replayed, which is what pointed at cross-talk rather than a regression.
 - **Open follow-up items:** carried — org forks + upstream PRs (now 0002/0003/0004 **+ 0005 driver + 0006 DLIO**), MCAP/foxglove when sudo appears, walking evidence + interactive RViz screenshot, python-mujoco pin decision, P-3 covariance export (still gated on hardware error data), R-4 levers if S3-class density becomes a target, OSQP maxIter under swarm load. New — **Q-1 answers and the topology decision (blocking for 5B)**; **aarch64/target build**; **Orin CPU + latency benchmark**; **P-5** (DLIO TF from `publishPose`, fires on a failed T9-hardware or Orin latency number); **Q-4 needs its own session** (the driver cannot dual-publish); **verify the Mid-360 lidar→IMU offset on this unit**; **`ros2 bag record` may not resolve Unitree message types** for the Q-5 cross-check (Phase 4 saw the same limit with `ros2 topic hz`) — an SDK2-linked recorder may be needed.
 - **Suggested next step:** **Phase 5B — the robot session**, driven by `ros2/doc/phase5b_checklists.md` (8 blocks, each with preconditions, exact commands, expected observables, abort criteria and its bag). Its prerequisites are exactly three: **(1) Q-1 answered and the topology decision recorded; (2) the workspace built on whatever will run it — the aarch64 build is the open risk; (3) props sourced, including one r ≥ 0.30 m, plus a tape-measure survey of a flat wall.** With those, blocks 1–8 are a capture session, not a debugging session. If the robot is unavailable, the honest alternative is not to skip ahead: **Phase 6 depends on 5B's data** (the CropBox retune, the k_σ dataset, and the drift gate all feed it), so the next useful work without a robot is retiring the aarch64 risk — a container or an Orin dev kit — rather than starting Phase 6.
+
+### 2026-08-02 — Interim block (between 5A and 5B): retire risk, close deferred gates, prepare P-3
+
+- **Objective:** not a §18 phase. Four independent, timeboxed workstreams, none needing the robot: **A** retire the aarch64 risk, **B** close the walking gates deferred since Phases 1 and 4, **C** implement P-3 and characterise the circle-fit bias, **D** carried housekeeping. Reported per workstream against the evidence bar each was given.
+
+- **OPERATOR INPUT NEEDED (answerable in one pass):**
+  1. **One apt transaction with sudo** on the dev machine: `ros-humble-rosbag2-storage-mcap`, `ros-humble-foxglove-bridge`. **`qemu-user-static` and `binfmt-support` are NO LONGER needed** — see workstream A; that ask is withdrawn.
+  2. **Q-1's full answer set for 5B** (unchanged, still blocking): G1 variant and onboard PC; Mid360 factory mount y/n; robot network and IPs; sudo + internet on the Orin; its shipped Ubuntu/ROS state.
+  3. **arm64 hardware in the lab** (a Pi 4/5, a spare Jetson, any arm64 box). This would retire workstream A's remainder outright and is worth more than any further emulation work.
+  4. **Props and robot-day scheduling.** Prop constraint has CHANGED — see workstream C: **r ≥ 0.30 m but not above ≈0.32 m**, or `max_circle_radius` must be raised in two config files first.
+  5. **Fork/PR authorisation** — pushing this project's patches to public forks is an outward-facing action; it was not taken unilaterally (workstream D).
+
+- **Workstream A — aarch64. Bar: full workspace building, tests run, native/emulated/cross stated. NOT MET. Achieved: 10 of 18 packages, EMULATED. Risk reduced, not retired.**
+  - **5A's blocker was wrong and that part is retired.** 5A recorded "no cross toolchain, no `qemu-user-static`, no binfmt handler — root required". Every clause is true; the conclusion is not. `qemu-user-static` is a **static** binary needing only `dpkg-deb -x` into `$HOME`; **Linux ≥ 6.7 allows `binfmt_misc` to be mounted and registered inside a user+mount namespace** (this kernel is 6.8.0-124), so `unshare -Urm --map-root-user` is enough; and rootless podman can `create`+`export` an arm64 rootfs even though it cannot exec one. Step 1 of the phase prompt (ask for root) was therefore never needed and the ask is withdrawn. Committed as `tools/arm64_emulate.sh`: a full aarch64 Ubuntu 22.04 + ROS Humble environment, working `apt`, aarch64 gcc 11.4.0, 32 cores.
+  - **Built (emulated, sequential, ~16 min):** cyclonedds (2m42), unitree_sdk2 (5m18), rmw_cyclonedds_cpp, obstacle_detector incl. the new P-3 message (2m42), sim_msgs, g1_description, dpcbf_ros_adapter, g1_perception_utils, livox_sdk2_vendor, unitree_dds_wrapper_vendor. **Not built:** pcl_ros, pointcloud_to_laserscan, livox_ros_driver2, t10_dds_coexistence, g1_perception_bringup, safety_obstacle_filter, sim_mjlidar_bridge, DLIO. **No test suite was run on aarch64** — with the workspace incomplete there was nothing meaningful to run, so that half of the bar is untouched too.
+  - **Nothing arch-specific was found.** 5A's static portability audit holds: no endianness, alignment or intrinsics problem appeared. All five faults were environment/CMake plumbing, and four are fixed: **(1)** `livox_ros_driver2` never declared its build-order dependency on `livox_sdk2_vendor` — the dev machine's *parallel* build happened to order it correctly and hid this for an entire phase; a sequential build fails at `find_library(LIVOX_LIDAR_SDK_LIBRARY)`. **Patch 0008**, a genuine repo bug. **(2)** Ubuntu's `libvtk9-dev` ships imported targets for `RelWithDebInfo` only → `CMAKE_MAP_IMPORTED_CONFIG_RELEASE`. **(3)** PCL headers include Eigen unqualified → `-isystem /usr/include/eigen3`. **(4)** `find_package(OpenSSL)` inside the ROS config chain reports "missing: OPENSSL_CRYPTO_LIBRARY (found version 3.0.2)" while a bare `find_library(crypto)` in the same shell resolves it → name the paths.
+  - **The fifth is NOT fixed and is the reason the bar is missed.** An upstream `ament_cmake` bug: `<pkg> exports the library '<pkg>' which couldn't be found` while the library is present and readable. Traced with `--trace-source` + `-DCMAKE_FIND_DEBUG_MODE=ON` — find_library prints *"The item was found at /opt/ros/humble/lib/liblaser_geometry.so"* on the line above the error. Mechanism: `set(_lib "NOTFOUND")` creates a NORMAL variable shadowing the CACHE variable that `find_library` writes; `_lib` is one cache slot shared by every such file in a configure; whether the shadow survives depends on CMP0126 in the enclosing scope, hence on the include stack, hence on **which packages are installed**. Same source, same CMake 3.22.1: fine on x86_64 here, fatal in the arm64 image, and the package it blames moves as the installed set changes. `unset(_lib CACHE)` before the search took the build from 3 to 10 packages, then the identical failure appeared in a second generated-file family (`rosidl_cmake_export_typesupport_libraries-extras.cmake`) that neither variant resolved; reverting all edits reproduced the failure **on pristine files at a different package**, confirming both the order-dependence and that the patch was not the cause. **Deliberately shipped as a diagnostic, not a fix** (`tools/diagnose_ament_export_libraries.py`): patching `/opt/ros` on the robot with something whose effect on link lines is not understood is worse than the failure. Upstream fix belongs in ros2/ament_cmake — stop sharing one cache variable.
+  - **Deliverables per the bar's fallback:** `tools/build_target.sh` (on-target build; `--check` preflight; each fix annotated with the error it prevents; ends with a **robot-day first-hour triage list** keyed by error message), `tools/arm64_emulate.sh`, `tools/diagnose_ament_export_libraries.py`, patch 0008, and `evidence/interim/aarch64_build.md`.
+
+- **Workstream B — walking. Bar: the policy locomoting stably long enough to run the A/B. NOT MET. The identified gap was closed; the run was not attempted.**
+  - **Done:** `ScriptedJoystick` now takes **button events** — the precise missing piece Phase 4 diagnosed. Profile lines gain an optional 5th column, a comma-separated key list held to the next breakpoint (`L2 R2 L1 R1 A B X Y up down left right start select`, plus LT/RT/LB/RB aliases). Read out of `g1_pub.h`'s wireless_remote packing: the FSM's "L2"/"R2" are the joystick's **LT/RT axes**, not buttons, so they are driven to 1.0 with `smooth = 1.0` (the default 0.03 would need ~50 updates to cross the 0.5 press threshold, so a short scripted chord would silently never register). Chord keys deliberately bypass `axis_filter_`: DPCBF gates locomotion commands, not mode changes (§10.5). An unknown key name aborts at load — a typo'd key doing nothing is exactly how a scripted FSM run becomes an unexplained "the robot never stood up". `simulate` builds; documented in `ros2/README.md` with the `L2+up` → FixStand, `R2+A` → RLBase profile.
+  - **Not done, and why:** the FSM drive-through and the post-spawn-collapse investigation were not started. Workstream A consumed the block's budget, and the phase brief says B must not consume the phase. **Consequently §17.3's collision rate and min-clearance remain deferred for a sixth phase**, the shadow-mode deltas are not re-priced, and **the rig-vs-density verdict on S3's 0.8235 is not delivered.** Robot state reached this block: none — the simulator was not run under policy. The remaining work is now genuinely small and fully specified: write the profile, run, instrument initial pose/settling time/gains.
+
+- **Workstream C — P-3 and the circle-fit bias. Both bars MET.**
+  - **P-3 implemented as fork patch 0007** (D6's one sanctioned message change): `CircleObstacle` gains `float64[3] covariance` = `[var_x, var_y, var_r]`, filled in `publishObstacles()` from the per-axis KFs' `P(0,0)`. Only meaningful post-P-2, which made `P` start from `R` instead of upstream's identity.
+  - **σ path wired in `safety_obstacle_filter`, DEFAULT-DISABLED** (`use_covariance: false`), config-gated, with `sigma_max` capping a diverged track. `SurfaceSigma() = sqrt(max(var_x,var_y) + var_r)` — worst-case centre error over direction plus an independent radius error in quadrature. Producers that are not the tracker leave covariance zero, so the term **self-disables rather than mis-fires** (unit test). Shipped behaviour remains `fixed_inflation = 0.051`.
+  - **Containment unchanged on S1/S2 — the bar.** Full `phase4_ab_run.sh` re-run reproduces Phase 4 exactly, **S3 perf ratio 0.8235**, the same figure the Phase-4 entry records. Containment with the σ term off: s1_static 100.000 %, s2_cross_05 100.000 %, s2_cross_08 100.000 %, s3_swarm 85.181 %, s4_occlusion 96.804 %.
+  - **Calibration harness:** `test/calibrate_k_sigma.py`, run end-to-end on sim data; `phase4_obstacles_dump.py` now records `cov`, so 5B is a data drop. With `fixed = 51 mm`, `k_σ = 0.287` covers 99.9 % pooled; coverage 92.524 % → 99.946 %, s3_swarm 85.181 → 99.887, s4_occlusion 96.804 → 100.000, S1/S2 untouched. **The shape of the remedy is right.**
+  - **The number is not, and this is the block's most useful finding: σ is not in metres.** σ p50 is **583 mm** (8.1 m at the S3 tail) because `obstacle_detector.yaml`'s `measurement_variance: 1.0` is a **unitless** knob that P-2 seeds `P(0,0)` from. So `k_σ` silently absorbs the missing scale, and **neither 0.287 nor the old branch's 2.748 is a sigma multiplier**. The fix is upstream of `k_σ`: set `measurement_variance` to the Mid-360's measured range-noise variance in m² (5B block 1, no extra robot time) *before* anyone calibrates. `corr(F_req, σ) = +0.339` — positive but weak; if hardware does not improve on it, the honest verdict is that per-track covariance is the wrong observable.
+  - **Circle-fit bias — characterised, with a functional form.** New harness `test/circle_fit_sweep.py` drives the **real extractor** with analytic ray-cast scans against a known cylinder (210 configurations, 193 detections), isolating the fit from odometry, projection and tracking. It reproduces the project's existing numbers (r=0.15: 34–44 mm centre vs Phase 3's 40.9/38.4/40.1; r=0.30: 76–103 mm vs Phase 4's 83 mm). **Fit through the origin, full arc, r ∈ [0.10, 0.40], d ∈ [1, 4] m:** `e_r = +0.084·r` (rms 5.2 mm), `e_c = −0.278·r` (rms 6.0 mm) — **both proportional to true radius and independent of range**. One correction to the record: Phase 4 reported the centre bias as a magnitude; it is signed, and the centre is pulled **towards** the sensor, so near-surface error is conservative and only the far side is short. Safety-relevant combination `F_req = |e_c| − e_r ≈ 0.22·r`.
+
+    | arc visible | e_r/r | e_c/r | F_req/r (r≥0.20) | max F_req |
+    |---|---|---|---|---|
+    | 1.00 | **+0.078** | −0.276 | +0.223 | 89 mm |
+    | 0.90 | −0.034 | −0.366 | +0.465 | 172 mm |
+    | 0.75 | −0.164 | −0.439 | +0.684 | 236 mm |
+    | 0.60 | −0.284 | −0.480 | +0.847 | 286 mm |
+    | 0.50 | −0.367 | −0.493 | +0.956 | 299 mm |
+
+    **The radius error changes sign at ~10 % occlusion** — a fully visible cylinder reads slightly too large (safe), a partly occluded one reads up to 37 % too small while the centre error keeps growing. That is a quantitative account of exactly the residual Phase 4 could not cover (S3's 15 % of pairs, S4's crosser coast). It also says a *fixed* inflation is the wrong shape: the requirement is a product of radius and occlusion. No correction was implemented — the obvious tangent-pair estimator under-estimates under truncation, the unsafe direction, and needs hardware arc statistics first.
+  - **A drop-out that must be fixed before robot day.** 17 of 210 configurations produced **no detection at all**, and they are the large radii: `detectCircles()` keeps a circle only if `1.084·r + radius_enlargement(0.17) < max_circle_radius(0.60)`, i.e. **r < 0.40 m**; `safety_obstacle_filter` then gates `true_radius > 0.60` again. **A prop at r = 0.40 m is invisible at 2–3 m with no warning**, and truncation perversely *restores* detection (shorter chord fits under the cut), so it presents intermittently as the robot moves. 5B's "one prop r ≥ 0.30 m" now carries an upper bound of ≈0.32 m unless both configs are changed first. Checklist updated.
+
+- **Workstream D — housekeeping. Partly done; the fork/PR item is deliberately not done.**
+  - **Org forks + upstream PRs: NOT DONE.** `gh` is not installed and no credentials for a project org exist here; more importantly, creating public forks and opening PRs under this project's name is an outward-facing action that was not authorised. Everything short of pushing is ready: eight recorded patches with measured evidence, and the genuinely upstreamable ones identified — 0003's `begin()++` double-count, 0004's KF initialisation, 0005's `/livox/imu` `frame_id`, 0006's DLIO QoS, 0008's missing dependency, plus the new ament_cmake bug (a separate upstream target). Carried as an operator ask.
+  - **python-mujoco pin: DECIDED — pin 3.6.0**, deliberately *not* the 3.3.6 the simulator vendors on the C side. H-3 is a real `mj_multiRay` AABB-pruning miss measured on 3.3.6; T2 passes on 3.6.0 precisely because it is fixed there, so matching the C runtime for symmetry would trade a passing safety gate for a failing one and force the T2 backend switch. The skew is bounded: the C side does physics, python raycasts the mirror, and the only thing they exchange is pose, which `test_mirror.py` and T7 already assert agree. Made **enforceable** rather than a note: new test `test_python_mujoco_pin` fails loudly on drift below the pin with the reason. This closes a follow-up carried since Phase 1.
+  - **MCAP/foxglove:** still apt-blocked; folded into the (now smaller) operator ask.
+  - **`phase5b_checklists.md` updated:** the prop radius bound and its mechanism; the build-script/diagnostic preflight with an honest "10 of 18" expectation; range-noise capture for `measurement_variance` derived from bags block 1 and 2 already produce; P-3 as a data drop with the exact two commands; and an arc-truncation capture that tests the whole bias model in one 60 s bag.
+  - **Unplanned but required: five fixture bags had to be regenerated.** Patch 0007's message change invalidates every recorded bag carrying `obstacle_detector/msg/Obstacles`; T5 went red with "no GT crosser samples in bag replay" — deserialisation, not a product regression. `s1_surveyed`, `s2_cross_05`, `s2_cross_08`, `s3_swarm`, `s4_occlusion` regenerated from `test_fixtures/README.md`'s recipe (which the exercise also validated); counts reproduce exactly (s2_cross_05 1076 GT / 216 clouds as before). **This is the standing cost of D6's sanctioned message change and should be expected again if the message ever changes.** New md5s: s2_cross_05 `3fde31e71d5b1124aa8a74fea9456850`, s2_cross_08 `3174aa0bf76d12dc41b7c0cdecbc6309`.
+  - Also fixed while using it: `phase4_ab_run.sh` aborted immediately on any clean machine — `pkill` returns 1 when nothing matches, and the script runs under `set -e`.
+
+- **Files added:** `ros2/patches/{0007-obstacle-detector-p3-per-track-covariance,0008-livox-driver-declare-sdk-vendor-dependency}.patch`; `ros2/tools/{arm64_emulate.sh,build_target.sh,diagnose_ament_export_libraries.py}`; `ros2/src/g1_perception/g1_perception_bringup/test/{circle_fit_sweep.py,calibrate_k_sigma.py}`; `ros2/evidence/interim/{aarch64_build.md,circle_fit_bias.md,p3_sigma_path.md,circle_fit_sweep.csv,k_sigma_sim.txt}`.
+- **Files modified (inside `ros2/`):** `setup_external.sh` (patches 0007, 0008), `README.md`, `doc/phase5b_checklists.md`, `config/safety_obstacle_filter.yaml`, `safety_obstacle_filter/{include/safety_obstacle_filter/gating.h,src/safety_obstacle_filter_node.cpp,test/test_gating.cpp}`, `sim_mjlidar_bridge/test/test_gates_t2_t3.py`, `g1_perception_bringup/test/{phase4_obstacles_dump.py,phase4_ab_run.sh}`.
+- **Complete outside-`ros2/` edit list:** `simulate/src/main.cc` (ScriptedJoystick buttons — the already-sanctioned file) and this §21 entry. **`simulate/CMakeLists.txt` was NOT touched** (no new file), nor `ros2_bridge.{h,cc}`. `dpcbf/`, `deploy/`, `src/`, `scripts/` untouched — confirmed by `git status`.
+- **Test counts: 80 → 85**, over the project packages: **0 errors, 0 failures, 2 skipped** (dpcbf_ros_adapter 18, safety_obstacle_filter 12, g1_perception_utils 5, g1_description 2, g1_perception_bringup 41 (2 skipped), sim_mjlidar_bridge 7). New: four σ-path gating tests (off-by-default, enabled, self-disable on zero covariance, cap) and `test_python_mujoco_pin`. Per-test DDS domains preserved. T5 is green again only because the fixtures were regenerated — it was red on the old bags and that is recorded above, not papered over.
+- **Evidence artefacts:** `ros2/evidence/interim/` — `aarch64_build.md`, `circle_fit_bias.md` + `circle_fit_sweep.csv` (210 rows), `p3_sigma_path.md` + `k_sigma_sim.txt`.
+- **Issues discovered / root causes:** the five build faults above; the message-change fixture invalidation; `phase4_ab_run.sh`'s `set -e`/`pkill` abort; and one harness bug worth recording because it produced *plausible* numbers — the first bias sweep read the previous configuration's reply (the extractor stamps `/raw_obstacles` with `now()`, so a reply cannot be matched to its scan by header), giving impossible half-metre centre errors and identical rows for different arc fractions. Fixed by draining the subscription and publishing exactly one isolated scan. The tell was not that the numbers were large but that they were **identical across configurations that must differ**.
+- **Remaining limitations:** no aarch64 test run and 8 of 18 packages unbuilt there; no walking, so collision rate and min-clearance are still unmeasured and S3's 0.8235 is still un-decomposed into rig vs density; `k_σ` underivable in physical units until `measurement_variance` is set from hardware; the circle-fit correction is characterised but not implemented; every number here is sim or emulation.
+- **Lessons learned:** a blocker recorded as "root required" is worth re-deriving rather than inheriting — three of 5A's four aarch64 clauses were true and the conclusion still wrong, and the whole environment took under an hour once that was tested instead of assumed. A build that works only on the machine it was developed on is not a working build: **four of five faults were latent all along and hidden by parallel scheduling or a fuller package set**, which is precisely what a robot-day build will not have. And when a fix stops working after it worked once, check whether it changed the *failure* rather than the *outcome* — `unset(_lib CACHE)` genuinely advanced the build seven packages and still had to be withdrawn, because advancing is not the same as being correct.
+- **Open follow-up items:** carried — org forks + upstream PRs (now 0002–0008, **plus the ament_cmake bug as a separate upstream target**), MCAP/foxglove, walking evidence + interactive RViz screenshot, Orin CPU + latency benchmark, P-5, Q-4's own session, Mid-360 lidar→IMU offset verification, SDK2-linked recorder for Q-5, R-4 levers, OSQP maxIter under swarm load. **Closed this block:** python-mujoco pin decision (3.6.0, enforced by a test); P-3 covariance export (implemented — only its *calibration* is still gated on hardware). New — **`measurement_variance` must be set from hardware range noise before `k_σ` means anything**; **`max_circle_radius` vs prop radius** (r < 0.40 m hard cut, two config files); **the ament `_lib` bug is an unresolved robot-day hazard**; **fixture bags must be regenerated on any `Obstacles` message change**; **circle-fit correction** (tangent-pair estimator, needs hardware arc statistics first).
+- **Suggested next step:** **5B's three preconditions are still not met** — Q-1 unanswered, the target build unproven, props unsourced — so 5B is not yet a capture session. The largest remaining risk is unchanged in identity but much reduced in size: **the on-target build**. The highest-value next action is **an hour on any arm64 box in the lab** (a Pi is enough) running `tools/build_target.sh`, which would either finish the job natively or reproduce the ament bug on a second machine and settle whether it is image-specific. Failing that, **workstream B is now the best use of a no-robot session**: the missing piece is built and the remaining work is bounded, and it is the only path to the two safety numbers this project has never had.
+
+### 2026-08-02 — Interim block 2 (still between 5A and 5B): walking, and two safety-relevant gaps
+
+- **Objective:** workstream **B** (walking) as the main job — close the gates deferred since Phase 1 and produce the two §17.3 safety numbers this project has never had — plus two sharply-specified gaps carried from workstream C, both safety-relevant and both cheap: **G1** (σ's units) and **G2** (the silent large-radius drop). Workstream **A** was NOT resumed: no arm64 box appeared, so `build_target.sh` + the diagnostic + the robot-day triage list remain the deliverables and the risk carries unchanged.
+
+- **OPERATOR INPUT NEEDED:**
+  1. ~~sudo apt for MCAP/foxglove~~ — **DONE** (`ros-humble-rosbag2-storage-mcap`, `ros-humble-foxglove-bridge` installed). Switching the record configs over is now an ordinary follow-up, not an ask.
+  2. **Q-1's full answer set for 5B** (unchanged, still blocking): G1 variant and onboard PC; Mid360 factory mount y/n; robot network and IPs; sudo + internet on the Orin; its shipped Ubuntu/ROS state.
+  3. **arm64 hardware in the lab** (a Pi 4/5, a spare Jetson, any arm64 box) — unchanged, and still the cheapest way to retire workstream A outright.
+  4. **Props and robot-day scheduling.** Constraint **RELAXED**: `r ≥ 0.30 m`, and the interim block's `≤ ≈0.32 m` upper bound is **WITHDRAWN** — see G2. Anything to `r ≈ 0.55 m` is now visible.
+  5. **Fork/PR authorisation** — still not taken unilaterally; everything short of pushing is now done (`ros2/patches/pr/PR_READY.md`).
+
+- **Reconciliation before writing anything:**
+  - **`s1_static_reference` is a pre-0007 bag and was missed in the interim block's regeneration.** Six fixtures carry `obstacle_detector/msg/Obstacles`; five were regenerated, that one was not (md5 unchanged, timestamp 2026-08-01 15:15 vs 23:15–23:20 for the others). It is harmless *today* only because its three consumers (`test_projection_replay`, `test_hw_source_contract`, `test_dlio_wiring`) subscribe to the live stack's obstacle topics and never to the bag's `/sim/gt_obstacles`. Recorded in `test_fixtures/README.md` with the condition under which it stops being harmless.
+  - **The interim block recorded only two of the five new md5s.** All five are now in `test_fixtures/README.md` alongside the pre-0007 values: `s1_surveyed 889d4c34…`, `s2_cross_05 3fde31e7…`, `s2_cross_08 3174aa0b…`, `s3_swarm 4282942c…`, `s4_occlusion 88511685…`. Every fixture the A/B harness consumes is confirmed post-0007.
+  - **The §17.3 A/B harness still runs from one command** (`phase4_ab_run.sh`), verified before it had a walking robot to point at.
+  - **`State_RLBase`'s entry preconditions, read from `deploy`'s source rather than from the button mapping:** the transitions are *not* hard-coded, they are DSL strings in `deploy/robots/g1/config/config.yaml` (`Passive→FixStand: "LT + up.on_pressed"`, `FixStand→Velocity: "RT + A.on_pressed"`), compiled in `FSMState`'s constructor and evaluated at 1 kHz against `lowstate->joystick`. `State_RLBase::enter()` requires nothing beyond a loaded policy and a live `lowstate`: it writes the policy's gains, calls `env->robot->update()` and spawns the policy thread, which calls `env->reset()` then steps at `step_dt = 0.02`. There is no settling-time or joint-position precondition — but there IS an exit condition, `bad_orientation(env, 1.0)`, which drops back to Passive past 1 rad of tilt. `mode_machine` must match (the sim's `G1Bridge` sets 5 for the 29-dof scene, so it does).
+
+---
+
+#### Workstream B — walking. **Bar MET.** Both safety numbers exist.
+
+**The buttons never reached the FSM's decision, and the reason was arithmetic, not wiring.** The prompt's instruction to prove the chords arrive before debugging anything upstream was the right call, and it paid immediately.
+
+New instrument, `simulate/build_ros2/fsm_button_probe` (source in `dpcbf_ros_adapter/tools/`, built by the sanctioned `simulate/CMakeLists.txt`): it runs the FSM's own `g1::subscription::LowState::update()` and the FSM's own compiled transition DSL — `deploy/include/unitree_joystick_dsl.hpp`, fed the condition strings out of `deploy`'s config — at 1 kHz against a live `rt/lowstate`. `deploy/` is read, never modified. It exits non-zero if a configured transition never fires, so it is a gate, not just a debugger.
+
+With the profile the interim block documented (`L2,up` at one breakpoint), the probe shows the keys **arriving correctly** — `LT` and `up` each 601 pressed ticks and one `on_pressed` edge, receiver-side axis peak 0.999999 — and **all seven** transition predicates firing **zero** times. The mechanism, from the trace:
+
+```
+ t          tick   LT_p  LT_val    up_p  up_op   Passive->FixStand
+ 7.705     15000    0    0.03       1     1       0    <- the only edge
+ 7.727     15022    1    0.5037     1     0       0    <- 22 ticks later
+```
+
+`up` is a `Button<int>`, so `up.on_pressed` is true for exactly one tick. `LT` is an `Axis`, and `g1_sub.h` feeds it the raw L2 *bit* through `smooth = 0.03` against `threshold = 0.5`, needing `1 − 0.97ⁿ > 0.5` ⇒ **n = 23 ticks**. The AND can never be true. Setting `LT.smooth = 1.0` on the *sender* (the interim block's fix) cannot help — it is the receiver's filter that lags, and only the sender's `pressed` flag crosses the wire. Staggering the chord (axis half ≥ 25 ms before the button) fires both predicates exactly once, and `g1_ctrl` logs the transitions live. Evidence: `evidence/walking/fsm_chord_timing.md`, both probe logs, the trace window.
+
+**Two further things a headless walking run needs, both learned the expensive way and both now in `README.md` and the harness:** start `g1_ctrl` *before* the simulator (it blocks in `wait_for_connection()`, so State_Passive is live at sim t≈0 and cannot lose the race to the profile's chords — one smoke run was lost exactly that way); and **hold the robot up until the policy is running**. `enable_elastic_band` is a hoist you toggle with GLFW key `9`, which is why every closed-loop session so far ran suspended; the other half of the operator procedure — lowering it — had no scripted form. `main.cc` (sanctioned file) gains `UNITREE_MUJOCO_BAND_LENGTH` and `UNITREE_MUJOCO_BAND_RELEASE=<t0>[,<ramp>]`, a sim-time linear ramp to zero, inert unless set and leaving stock behaviour untouched. Lowering onto FixStand's PD hold pose topples the robot every time (measured: tilt 0.02 → 0.33 rad within 3 s of the ramp starting); lowering it *after* `R2+A`, onto an actively balancing policy, works.
+
+**Robot state reached, stated against the bar** ("stable locomotion long enough to run the A/B; standing, twitching or being dragged is not walking"): pelvis 0.771–0.788 m against a 0.793 m standing height, **maximum |roll,pitch| 0.046 rad**, 110 s of continuous locomotion, 47–52 m of path at 0.43–0.48 m/s under a scripted forward+yaw profile, `bad_orientation` never firing. That is walking.
+
+- **The payload — §17.3 collision rate and min clearance, closed loop, for the first time.** `phase4_ab_run.sh` pins the robot at (0,0,0) and can only score command tracking; a robot that never moves has no collision rate. New one-command harness `test/walk_ab_run.sh` runs the real thing — policy walking, DPCBF in the 1 kHz seam, perception live — once per DPCBF mode on an identical seeded field, and `walk_ab_probe.py` measures, at 100 Hz from the simulator's own ground truth, `clearance(t) = min_i(|p_rob − p_i| − r_rob − r_i)` and, separately, falls. **The two are deliberately not merged into one "collision rate":** a negative clearance is a DPCBF *margin* violation (`r_rob` is a disc about the pelvis; the limbs reach outside it), while body contact against a 1.5 m cylinder shows up as a fall. Fields are the live `DynamicObstacleManager` arena at four densities — **not** the S1–S4 fixture bags, which are bag replays with the simulator out of the loop and cannot produce these numbers at all — with W4 the Phase-4 90-obstacle arena verbatim, seed 42. `dpcbf/` untouched: the per-field configs are copies in a scratch run tree.
+
+  | field | mode | walked | fell | GT in p_max | margin viol. | viol. time | min clearance | p50 clearance |
+  |---|---|---|---|---|---|---|---|---|
+  | W1 sparse static | oracle | 110.4 s | no | 0.72 | **0** | 0 % | +0.020 m | 0.979 m |
+  | W1 sparse static | estimated | 110.3 s | no | 0.71 | **0** | 0 % | +0.193 m | 0.899 m |
+  | W2 sparse crossing | oracle | 110.3 s | no | 0.87 | 1 | 1.88 % | −0.135 m | 0.651 m |
+  | W2 sparse crossing | estimated | 110.3 s | no | 1.48 | 5 | 5.78 % | −0.156 m | 0.970 m |
+  | W3 swarm (run A) | oracle | 110.4 s | no | 2.79 | 7 | 3.04 % | −0.238 m | 0.981 m |
+  | W3 swarm (run B) | oracle | 8.5 s | **53.5 s** | 10.24 | 9 | 18.56 % | −0.248 m | 0.075 m |
+  | W3 swarm | estimated | — | **30.0 s** | — | — | — | — | — |
+  | W4 Phase-4 arena | oracle | 110.3 s | no | 4.41 | **0** | 0 % | +0.021 m | 0.537 m |
+  | W4 Phase-4 arena | estimated | 25.4 s | **70.4 s** | 7.52 | 5 | 12.91 % | −0.215 m | 0.374 m |
+
+  **The W4 estimated fall at 70.4 s is a collision, not a stumble:** clearance crosses zero at t = 69.83 s and the robot pitches (0.078 → 0.093 → 0.177 → 0.268 → 0.397 rad) and drops (z 0.773 → 0.640 m) over the next 0.3 s. It walked into a cylinder. **The baseline it was scored against did not survive repetition — see the next item, which withdraws the "oracle is clean" reading of this table.**
+
+- **Repetition, and two claims withdrawn because of it.** Two further W4 pairs were run on the identical seeded field (`evidence/walking/repeats/`). All three oracle runs and all three estimated runs:
+
+  | run | oracle | estimated |
+  |---|---|---|
+  | matrix | 0 violations, no fall, min cl +0.021 m | 5 violations, min −0.215 m, **fell 70.4 s** (collision) |
+  | r2 | **11 violations**, no fall, min −0.067 m | **fell 37.9 s** (pre-window) |
+  | r3 | 2 violations, **fell 115.5 s**, min −0.217 m | **fell 35.3 s** (pre-window) |
+
+  1. **WITHDRAWN — "oracle mode is clean on W4."** Across three runs of the same configuration the oracle arm took **0, 11 and 2** margin violations and fell once. The clean first run was luck.
+  2. **WITHDRAWN — the margin-violation ordering on W4.** The oracle arm's own spread (0–11) brackets and exceeds the single scoreable estimated value (5); at n = 3 the counts cannot separate the arms, and quoting 0 vs 5 would be quoting noise.
+  3. **SURVIVES — the fall ordering.** Estimated fell **3 of 3** (35.3, 37.9, 70.4 s); oracle **1 of 3**, and latest of all (115.5 s). Consistent across every pair — but two of the three estimated falls precede the first walking command and are the band-transfer class that `diag/` shows a later release largely removes, so **this must be re-run on the `34,6` bring-up before it carries weight**.
+
+  **The delta metric, by contrast, IS reproducible.** The same three W4 oracle runs give tracked→GT p50 **104.8 / 99.8 / 103.9 mm** and p90 **321.7 / 293.4 / 280.9 mm** — ±3 % and ±7 % — over 27–32 k samples each, against margin-violation counts of 0 / 11 / 2 on those very runs. A percentile over ~30 000 per-obstacle comparisons averages the whole run; a violation count is a handful of rare events at the mercy of where a chaotic trajectory went. **The two halves of this block's walking result therefore carry very different weight: the shadow deltas and everything resting on them — including the rig-vs-density verdict on S3 — reproduce and are solid; the collision rate and clearance distribution are a first sample and gate nothing yet.**
+
+  **What W4 therefore establishes** is that the estimated arm is markedly less stable, that at least one of its failures is a genuine collision, and that **the baseline is not clean either** — not a clean oracle-vs-estimated separation. Ordering across fields at the strength the data supports: W1 0 → 0, W2 1 → 5, W4 (0, 11, 2) → (5, –, –). Estimated is never *better* than oracle in any run, but nothing here is repeated enough to be a gate.
+
+- **Two caveats stated up front, because they bound how far these numbers travel.** (i) **The comparison is distributional, not paired.** The arms share seeds and command profile, but diverge the instant the filters differ, so they do not meet the same obstacles at the same times; Phase 4 bought pairing by pinning the robot, and a moving robot cannot have both. (ii) **One 110 s run per cell is a sample, not a measurement.** W3 oracle was run twice on the identical seeded field and disagreed qualitatively — run A walked the full window at 2.79 obstacles inside `p_max`, run B wandered into a corner of the 8×8 arena at 10.24 and fell at 53.5 s. The loop is chaotic and live runs are wall-clock nondeterministic (H-10). The W3 cell therefore supports no verdict and is reported, not concluded from; the *ordering* above is the robust part, the individual counts are not. Repeats of the W4 pair are in `evidence/walking/repeats/`.
+
+- **The oracle arm is not clean either, and after repetition this is the block's firmest closed-loop result — upstream of perception.** In W2, W3 and W4 the arm that sees exact ground truth with zero latency and zero association error still lets the pelvis disc overlap an obstacle disc by up to 0.25 m, in **4 of the 5 oracle runs that produced a scoring window**, and it fell once. **DPCBF's guarantee is on the commanded velocity; the realised base motion is the RL policy's, and the policy's velocity-tracking error is modelled nowhere in the chain.** Two further unmodelled terms: `r_rob = 0.30 m` is a disc about the pelvis while a walking G1's feet and arms swing outside it, and `s = 1.05` is sized against command error, not tracking error. No amount of perception improvement fixes this, and neither the offline A/B nor the containment sweep could have surfaced it.
+- **The re-priced shadow deltas, and a control Phase 4 never ran.** `tracked → nearest-GT` per tracked circle inside `p_max`, capped at 0.5 m (Phase 4's NN cap — so **p50 and p90 are comparable with Phase 4's; p99 is cap-limited here and is not**). Rather than compare against a number recorded four phases ago, a **rig control** was run: identical field (90 obstacles, seed 42), identical code, identical probe, band never lowered and no `g1_ctrl`, so the robot hangs limp exactly as it did when the Phase-4 shadow deltas were taken (measured pelvis z 1.338 m, confirming the hoist). Its clearance/violation numbers are meaningless — a body hanging from a band under nobody's command — and only its delta row is a measurement.
+
+  | condition | count | speeds | GT in p_max | p50 | p90 |
+  |---|---|---|---|---|---|
+  | **W4 rig control**, suspended, this code | 90 | 0–0.8 | 8.97 | **343 mm** | **470 mm** |
+  | W4 oracle, same arena, **walking** | 90 | 0–0.8 | 4.41 | **105 mm** | **322 mm** |
+  | W3 oracle, swarm, walking (run A) | 20 | 0.2–0.8 | 2.79 | 120 mm | 341 mm |
+  | W2 oracle, sparse moving, walking | 6 | 0.5–0.8 | 0.87 | 116 mm | 311 mm |
+  | W1 oracle, sparse static, walking | 6 | 0 | 0.72 | 80 mm | 209 mm |
+  | *Phase-4 record, same field, suspended* | 90 | 0–0.8 | — | *94 mm* | *186 mm* |
+
+  Decomposition (Δp50 / Δp90): **obstacle motion** (W1→W2, same 6 obstacles, same seed) **+36 / +102 mm**; density 6→20 (W2→W3) +4 / +29; density 20→90 (W3→W4) −15 / −19; **rig removed** (rig control → W4 walking, same field and code) **−238 / −148**.
+
+- **The rig is a large artifact — larger than Phase 4 recorded, and I could not reconcile the two.** On identical code and field the suspended robot's p50 is **343 mm against walking's 105 mm**: the rig is 3.3× worse. **Phase 4's 94 / 186 mm was not reproduced**, and the gap is 3.6×. Two candidate causes, neither now verifiable: the numbers came from a different measurement path (the adapter's internal shadow accumulator at query time, against this ROS-level probe), and the limp robot's *attitude* is an uncontrolled variable — this control saw |roll,pitch| up to **0.456 rad (26°)**, and a 26°-tilted LiDAR projected into a 0.15–1.60 m band above `base_footprint` slices cylinders at heights the circle fit was never meant for. Phase 4 recorded the rig's ±0.45 m swing and free yaw but not its tilt. Stated plainly: **the Phase-4 live-arena figures — the 0.686 est/oracle ratio and the 94/186 mm deltas — should be treated as measured on an uncontrolled rig and superseded by the walking numbers, not averaged with them.** Reconciling or retiring them is a follow-up.
+
+- **The rig-vs-density verdict on S3's 0.8235: it is a REAL PERCEPTION LIMIT, not an evaluation artifact. Phase 7 remediation, not re-measurement.** Three legs, in increasing independence from anything measured this block:
+  1. **By construction S3 contains no rig at all.** The S1–S4 fixture bags were recorded with a constant grounded `qpos` (`make_scenario_scene.py::grounded_qpos` — pelvis z = 0.793, identity quaternion, never updated). The suspension rig existed only in the Phase-4 *live-arena* session, which is where the 0.686 and the 94/186 mm came from. **S3's 0.8235 was measured with a perfectly stationary sensor: there was never a rig artifact in it to remove.** This leg settles the question on its own and depends on no measurement taken this block — it is a fact about how the fixture was generated, and the prompt's premise that S3 might be partly a rig artifact is refuted by it.
+  2. **Among the things that ARE in S3, the dominant term is obstacle motion, not density.** Holding count and seed fixed and only starting the obstacles moving costs +36 mm at p50 and +102 mm at p90 — more than the entire density span from 6 to 90 obstacles. That is tracker coast-and-re-acquire plus extractor arc truncation on moving targets: exactly the Q-2 residual class Phase 4 identified and could not cover with a fixed inflation.
+  3. **S3's number is a LOWER bound.** Its sensor is perfectly still; a walking sensor is 2–4× worse on the same scene class. A hardware capture with the robot walking should be expected to be worse than S3, not better, and must not be compared with the fixture numbers as if they were like-for-like.
+- **Walking visual evidence (carried since Phase 1): produced, offscreen.** `test/walk_overlay.py` + `walk_overlay_run.sh` render the same three layers RViz would show — `/scan` in the odom frame, `/tracked_obstacles`, `/sim/gt_obstacles`, plus the base pose and its `p_max` horizon — sampled live from the running walking stack through **matplotlib Agg**: no display, no RViz, no GL. Say which was used, so: **offscreen render from a live session**, not a bag replay and not an interactive screenshot. It shows more than the screenshot would have, because tracked and GT circles are overlaid per obstacle rather than summarised as a percentile. `evidence/walking/walk_overlay.png`.
+
+---
+
+#### G1 — σ's units. Resolved, and the interim block's diagnosis was half wrong.
+
+- **σ has always been in metres; the VALUE was never set.** The tracker's KF is textbook (`kalman.h`, `tracked_circle_obstacle.h`): `C = [1 0]`, the measurement `y` is a circle-centre coordinate **in metres**, so `R(0,0)`, `P(0,0)` and `SurfaceSigma() = sqrt(max(var_x,var_y)+var_r)` are m², m² and m by construction. There is no missing scale factor and there never was. What is wrong is the number: `measurement_variance: 1.0` asserts a **one-metre 1σ** LiDAR measurement, P-2 seeds `P(0,0) = R` from it, every track is born at σ = 1.0 m and relaxes to ≈0.58 m — exactly the p50 the interim block measured — and `k_σ` silently absorbs the difference. The interim block's conclusion that neither 0.287 nor H-8's 2.748 is a sigma multiplier **stands**; its reason ("a unitless knob") does not, and the correction changes the fix from a unit conversion to a calibration. Recorded because it is the general lesson: **1.0 m² is a perfectly well-typed variance** — no unit check, no type system and no dimensional analysis can tell a correct m² from one half a million times too large. Only data can.
+- **The measurement path now exists and is exercised.** `phase4_obstacles_dump.py` records `/raw_obstacles` (the KF's actual measurements — without them a robot-day capture cannot derive R at all), and new `test/measure_measurement_variance.py` clusters detections per physical target on a static scene and reports the scatter about each target's mean, so the *systematic* circle-fit bias — which `fixed_inflation` already covers and which would be double-counted here — is absorbed by the mean rather than folded into R. **Measured on `s1_surveyed`: pooled position variance 1.775e-06 m² (1σ = 1.3 mm), i.e. the shipped 1.0 is 563 431× too large.** But 1.3 mm is not a candidate value either — the simulated Mid-360 is an analytic raycast with no range-noise model, so that scatter is a discretisation artefact, and setting R to it would tell the tracker to believe every measurement absolutely and ignore its own process model. **Both endpoints are wrong for shipping, which is exactly why what ships is machinery rather than a number.**
+- **Decision: measured and recorded, NOT shipped from sim data.** `measurement_variance` is a *sensor* property. Deriving it from the simulator's noise model and shipping it would re-tune the tracker — R sets how far every position innovation is trusted, so it moves tracked positions, velocities, T5's RMSE and every containment number downstream — on the strength of a number describing a simulator rather than a Mid-360. That is the same "looks authoritative, isn't" failure this gap is about, committed in the other direction. 5B block 1 sets the shipped value from hardware, as a joint recalibration with the P-2 tuning, re-verified against S1/S2 containment afterwards.
+- **What ships instead is that σ can no longer be used silently while it is wrong.** (i) `calibrate_k_sigma.py` **refuses** to emit a `k_σ` when pooled σ p50 exceeds `SIGMA_PLAUSIBLE_MAX = 0.25 m`, printing why instead of an authoritative-looking number — so a robot-day data drop lands in a correct path or a loud one, never a plausible wrong one. (ii) `gating.h` gains `kSigmaPlausibleMax` and a `Stats` struct; `Apply()` counts `sigma_implausible` and `sigma_clamped` **separately**, because the remedies are opposite (fix R, versus trust the cap), and the node emits throttled warnings naming the offending σ. (iii) The unit is now written where the value lives — Appendix A, `obstacle_detector.yaml` and the 5B checklist all say `m²` and say what 1.0 asserts.
+- **Containment re-verified, and it is unchanged where it had to be.** Full `phase4_ab_run.sh` re-run after patch 0009: **s1_static, s2_cross_05 and s2_cross_08 all 100.000 % at F = 0, to the last recorded digit**, and the §17.3 offline ratios reproduce (S1 0.9565, S2 1.0000 / 0.9978, S4 0.9456). S3 moves *slightly better* — containment 67.195 → 70.895 % at F = 0 and A/B ratio 0.8235 → **0.8265** — which is the predicted direction, since 0009 can only admit circles and a swarm has merged arcs that used to exceed the old 0.43 m cut. Nothing regressed. (The tracker itself is untouched: `measurement_variance` is unchanged, so this re-verification is about 0009, and G1 ships no behaviour change to re-verify.)
+- **Consequence for P-3, stated plainly:** the interim block's "coverage 92.5 % → 99.9 %, S3 85.2 % → 99.9 % with `k_σ = 0.287`" was computed on σ ≈ 0.58 m. Once R is real, σ falls by orders of magnitude and `k_σ` must rise by the same factor to buy the same inflation. Rescaling does not change a correlation, so the *shape* of the remedy is unaffected and its *magnitude* is simply uncalibrated — and `corr(F_req, σ) = +0.339` remains the number that decides whether per-track covariance is the right observable at all.
+
+---
+
+#### G2 — obstacles at r ≳ 0.40 m were silently dropped. Hypothesis confirmed; gate aligned; drops made observable.
+
+- **The arithmetic hypothesis is confirmed, and it was checked rather than adopted.** `detectCircles()` does `circle.radius += p_radius_enlargement_` **before** `if (circle.radius < p_max_circle_radius_)`, so the kept condition is `fit < 0.60 − 0.17 = 0.43 m`; with the interim block's measured fit bias (`+0.084·r` on a fully visible cylinder) that is **≈ 0.397 m of true radius**. Verified against every row of the 210-configuration analytic-ray sweep: the rule `keep ⟺ fit + 0.17 < 0.60` reproduces **all 17 non-detections and all 43 detections at r ≥ 0.4 with no exceptions**. One further sweep miss (r = 0.10 m, d = 4 m, 50 % arc) is correctly *not* explained by it — that one is `min_group_points`.
+- **The cutoff is not a single radius, which is the safety-relevant part.** Truncating the visible arc shortens the chord, shrinks the fit and brings the same physical object back under the cut: r = 0.40 m at 2 m is invisible at full arc and visible at 90 % arc; r = 0.50 m needs 25 % occlusion to appear. Range matters too through `sqrt(1−(r/d)²)` — r = 0.40 m is seen at 1.0 and 1.5 m and dropped at 2.0, 2.5 and 3.0 m. The failure is not "objects above X are missing", which an operator could work around, but "objects near X flicker as the robot moves", which looks like a tracking problem and is not one.
+- **Three mismatches with §9.6, all now corrected in the body.** (1) the gate was on `fit + radius_enlargement`, so `max_circle_radius` really meant *"max radius minus radius_enlargement"* and **making the conservative safety inflation larger silently made the sensor blinder** — that backwards coupling is the actual defect; (2) the published `true_radius` is the *fitted* radius, +8.4 %·r biased, not the true one; (3) `safety_obstacle_filter`'s own `true_radius > 0.60` gate was therefore **effectively unreachable** — the extractor could never emit a `true_radius ≥ 0.43`. Half wrong, and the new counter is what showed it: post-patch that gate fired once on a `true_radius` of 0.602 m, because the extractor bounds its own *fit* while the filter sees a value that has been through the tracker's KF. It catches a KF-drifted radius, which is a real thing the extractor cannot.
+- **Decision: align the semantics** (fork patch **0009**), not raise the threshold and not document the accident. The plausibility test ("this arc is too big to be an obstacle") and the safety margin ("report obstacles slightly larger than measured") are different ideas and one had been made a function of the other. The patch moves the enlargement to after the gate; downstream is untouched, because `circle.radius` still carries the enlargement when pushed, so `mergeCircles()` and `true_radius = radius − enlargement` behave exactly as before for every circle already being kept — the change can only *admit* circles that were previously dropped. `mergeCircles()`'s own test is left arithmetically alone (its quantity is a deliberate over-bound, and a refused merge leaves both parents alive) and only made visible.
+- **Resulting sensing limit, in metres of true radius: ≲ 0.55 m** (`0.60/1.084`, fully visible; partial occlusion only extends it). **Verified after the patch on the same harness:** r = 0.30 … 0.55 m now all detect at 2 m and 3 m (r = 0.40 m was dropped at both before), the last kept fit is 0.5796 m just under the 0.60 threshold, and 0.60/0.65 m drop — an empirical limit of 0.55 m against the predicted 0.553 m. In physical terms this pipeline can see standing and walking people (r ≈ 0.20–0.30 m) comfortably, and seated people, office chairs, bins, cones and crates up to ~1.1 m across; it **cannot** see structural pillars, pallet stacks, vehicles or any wall — by design, because they are not circles and the gate exists to stop the extractor handing DPCBF a fictitious three-metre constraint fitted to a wall arc. That last row is a limitation of the circle model, not of the threshold, and belongs with §9.7's Phase-7 work.
+- **The prop bound is reconciled and relaxed.** The interim block's `r ≥ 0.30 m but ≤ ≈0.32 m` was a consequence of the accidental 0.397 m cut plus margin for its arc dependence. **Withdrawn.** The constraint on props is now only `r ≥ 0.30 m` (to exercise the radius-dependent bias) and `r ≤ 0.55 m`. `phase5b_checklists.md` block 0 updated.
+- **Every drop is now observable, which was required whatever the threshold.** Extractor: `dropped_large_circles_` and `refused_large_merges_`, each with a throttled `WARN` naming the offending radius, the threshold and the running count. Filter: `Stats{stale_messages, dropped_large_radius, sigma_clamped, sigma_implausible, radius_max_dropped, sigma_max_seen}` filled by `Apply()` and reported by the node, with four new unit tests including one asserting that passing no `Stats` leaves behaviour byte-identical. Both fire live (`evidence/interim/g2_drop_warnings.log`): *"dropped a circle of fitted radius 0.720 m … an obstacle this large is INVISIBLE downstream; 22 dropped since start"*. Before this block that whole sequence was silent.
+---
+
+#### Workstream A — aarch64. **Not resumed, as scoped.** No arm64 box appeared, so `tools/build_target.sh`, `tools/arm64_emulate.sh`, `tools/diagnose_ament_export_libraries.py`, patch 0008 and the robot-day first-hour triage list remain the deliverables, and the risk — the on-target build, with the `ament_cmake` `_lib` cache-shadowing bug as its sharpest edge — carries forward unchanged. The withdrawn workaround stays withdrawn. An hour on any arm64 box still retires it.
+
+#### Housekeeping
+
+- **PR-ready artifacts prepared, nothing pushed.** `ros2/patches/pr/` holds six minimal, single-purpose patches split out of the workspace series, each **verified by `git ls-remote` + `git apply --check` against a fresh clone of the upstream tip**, with its commit message, reproduction and the measurement that justifies it (`PR_READY.md`). Three of the four target repos are pinned *at* their upstream tip, so those apply directly. Two findings came out of doing it:
+  - **Patch 0002 (`pcl_ros` output QoS) must NOT be offered upstream — it is obsolete.** The `ros2` tip (`e264aff1`) has since added `QosOverridingOptions` to `pub_output_`, so the reliability is a parameter (`qos_overrides./output.publisher.reliability: best_effort`) and no source change is needed. Our pin (`9d078eb`, 2.6.1) predates it. The action is on our side: when the pin moves past `e264aff1`, delete patch 0002 and set the override. This is the second time "verify against the checkout, not the doc" has paid, in the mirror-image direction — verify against the *tip*, not against your own fork.
+  - The genuinely general fixes are extracted from their bundles: `upstream-01` is P-1's `begin()++` double-count alone (27 lines, not the componentisation/QoS/TF patch it was carried inside), `upstream-02` is P-2's two-point initiation covariance alone (31 lines), `upstream-05` is the `/livox/imu` `frame_id` fix alone (not the `package.xml` workspace plumbing). `upstream-03` (0008) and `upstream-04` (0006) were already minimal; `upstream-06` is the new 0009. 0007 stays fork-only (it changes a public message). The `ament_cmake` finding is an **issue report, not a PR**, and deliberately carries no patch: a fix that changes link lines on a robot without being understood is worse than the failure, which is why the local workaround was withdrawn in the first place.
+- **MCAP/foxglove installed.** The recording configs still default to sqlite3; switching them is now an ordinary follow-up rather than an operator ask.
+- **`phase5b_checklists.md` updated:** the prop bound relaxed with G2's mechanism and the real limit in metres of true radius; block 1's σ section rewritten with the corrected units, the two ways to derive R in preference order, and the warning that R is not a display parameter; block 5's calibration note pointing at the new refusal; and a new **block 9** on what walking changed about the A/B procedure — that the fixture bags have a perfectly stationary sensor and are therefore a lower bound, that bring-up on hardware is the same hold-then-lower procedure the scripted profile encodes, and that `walk_ab_run.sh` needs no bags so it is the cheapest way to re-verify the chain on the target.
+
+- **Files added:** `ros2/patches/0009-obstacle-detector-p4-fit-radius-gate-and-drop-observability.patch`; `ros2/patches/pr/{PR_READY.md,upstream-01…06}`; `dpcbf_ros_adapter/tools/fsm_button_probe.cc`; `g1_perception_bringup/test/{walk_ab_run.sh,walk_ab_probe.py,walk_ab_report.py,walk_scenarios.py,walk_state_probe.py,walk_overlay.py,walk_overlay_run.sh,measure_measurement_variance.py}`; `g1_perception_bringup/config/walk_profile.txt`; `ros2/evidence/walking/**` and `ros2/evidence/interim/{g1_sigma_units.md,g2_radius_gate.md}`.
+- **Files modified (inside `ros2/`):** `setup_external.sh` (patch 0009), `README.md`, `test_fixtures/README.md`, `doc/phase5b_checklists.md`, `config/{obstacle_detector.yaml,safety_obstacle_filter.yaml}`, `safety_obstacle_filter/{include/safety_obstacle_filter/gating.h,src/safety_obstacle_filter_node.cpp,test/test_gating.cpp}`, `g1_perception_bringup/test/{phase4_obstacles_dump.py,calibrate_k_sigma.py}`.
+- **Complete outside-`ros2/` edit list:** `simulate/src/main.cc` (the band-lowering ramp + its two env hooks) and `simulate/CMakeLists.txt` (the `fsm_button_probe` target) — both already-sanctioned files — plus this §21 entry and the §9.6 / Appendix-A corrections in the body. **`dpcbf/` byte-for-byte identical to `f111cfa`** (verified: `git diff f111cfa -- dpcbf/` empty), and `deploy/`, `src/`, `scripts/` untouched — `deploy/include/unitree_joystick_dsl.hpp` is *included* by the probe, never modified. `simulate/src/ros2_bridge.{h,cc}` not needed. Confirmed by `git status`.
+- **Test counts: 85 → 89**, over the project packages: **0 errors, 0 failures, 2 skipped** (dpcbf_ros_adapter 18, safety_obstacle_filter 12 → **16**, g1_perception_utils 5, g1_description 2, g1_perception_bringup 41 with the 2 skips, sim_mjlidar_bridge 7). One trap worth recording, because it looks alarming: `colcon test-result --all` from the workspace root reports *1466 tests, 815 failures* — every one of them a **lint test in an external package** (`rmw_cyclonedds_cpp`'s `xmllint` cannot fetch `package_format3.xsd` without network, and so on). Those have never been in this project's count; scope the query to the project build dirs, as the earlier entries did. New: four `safety_obstacle_filter` observability tests (large-radius drop counted with the largest offender, stale message counted, implausible σ flagged separately from a legitimately capped one, and `Apply()` with no `Stats` byte-identical to `Apply()` without). `t1_oracle_equivalence` (simulate CTest) still **PASS** after the `main.cc` band changes — the 1 kHz seam is untouched by them. Per-test DDS domains preserved.
+
+- **Evidence artefacts:** `ros2/evidence/walking/` — `walking_ab.md` (the full analysis), `ab/` (9 runs + the rig control: metrics, traces, per-run logs, `walk_ab_report.txt`), `repeats/{r2,r3}` (the two extra W4 pairs + `repeats_report.txt`), `diag/` (the late-band discriminator), `fsm_chord_timing.md` + the two probe logs + the trace window, `walk_overlay.png`, `test_counts.txt`. `ros2/evidence/interim/` — `g1_sigma_units.md`, `g1_measurement_variance.txt`, `g2_radius_gate.md`, `g2_cutoff_sweep_post0009.csv`.
+
+- **Issues discovered / root causes:**
+  - The chord-timing bug above — arrival and satisfaction are different questions, and only an instrument that evaluates the *predicate* can tell them apart.
+  - **The band-lowering transient is a failure mode of the harness, not of the product**, and it took a discriminator to say so: two dense-field estimated runs went down at t ≈ 30 s, 2 s after the band finished lowering and 10 s before the first walking command. Lowering 10 s later turned one of them into 73 s of walking. The W4 estimated fall at 70.4 s is *not* in that class and is a real collision.
+  - **`walk_ab_probe.py` crashed with `IndexError` when a run fell before the scoring window opened** — the one run whose trace was most worth reading was the one that produced none. Fixed twice over: the fall is now detected across the whole trace rather than after the settle filter, and the raw base trace is always written.
+  - **I clobbered W3 oracle's own artefacts** by re-running a scenario pair when I only meant to re-run one arm. `WALK_MODES` now exists; the lost run's numbers are transcribed into `W3_oracle_runA_transcribed.json` with that provenance stated, and the replacement run is the file-backed one.
+  - `measure_measurement_variance.py` assumed a `center` key the dump does not use; `circle_fit_sweep.py` needs an extractor running and silently reports "NO DETECTION" for every row when there is none — which is indistinguishable from a real total drop-out, and briefly looked like patch 0009 had broken everything.
+  - `set -u` plus `source /opt/ros/humble/setup.bash` aborts on unbound `AMENT_TRACE_SETUP_FILES`.
+
+- **Remaining limitations:**
+  - **The closed-loop metric has enormous run-to-run variance and this block does not have enough samples to beat it.** W3 oracle run twice on the identical seeded field gave a clean walk and a fall; W4 oracle run three times gave 0, 11 and 2 margin violations and one fall. Only the W4 fall ordering (estimated 3/3, oracle 1/3) is consistent across repeats, and even that is contaminated by the bring-up transient. **Nothing in the walking A/B is a gate yet.** The harness is the deliverable; the numbers are a first sample.
+  - The walking A/B is a **distributional, not paired**, comparison — the arms diverge as soon as the filters differ.
+  - The A/B matrix was taken with the **pre-0009** extractor and the **24,4** band release; 0009 is strictly permissive for these fields (max true radius 0.30 m ⇒ fit ≈ 0.33 m, far under the 0.43 m cut) but the merged-arc path could differ, and 34,6 is the better bring-up. Re-running the matrix on both is a named follow-up rather than a silent change.
+  - **The Phase-4 rig deltas (94/186 mm) were not reproduced** by a controlled rig run on the same field and code, which measured 343/470 mm. The discrepancy is unexplained; the limp robot's *tilt* is an uncontrolled variable that Phase 4 did not record.
+  - The tracked→GT p99 in this harness is truncated by the 0.5 m association cap and is not comparable with Phase 4's.
+  - `measurement_variance` is still the inherited 1.0 m². The tripwires make that observable; only hardware can fix it.
+  - No aarch64 build or test run; every number here is sim.
+
+- **Lessons learned:** *arrival is not satisfaction* — the buttons were received perfectly and the transition was still arithmetically impossible, and no topic-level probe could have shown that; only running the consumer's own predicate could. *A single run of a chaotic closed loop is an anecdote* — the first W4 pair read as a clean oracle-vs-estimated separation and two repeats dissolved it, while the same repeats left the delta percentiles intact to ±3 %; which half of a result survives repetition is not obvious in advance, and the only way to find out is to repeat it before reporting it. *A well-typed number can be nonsense* — `measurement_variance: 1.0` is a valid m² variance half a million times out, and nothing in the type system, the units or the code review could catch it, which is why the fix that ships is a tripwire and not a value. *A plausibility gate must not consume a safety margin* — folding `radius_enlargement` into the `max_circle_radius` test made the pipeline blinder every time it was made more conservative, which is exactly backwards, and it hid behind an *intermittent* symptom because occlusion restores the detection. And *the control you did not run is the number you cannot use*: the Phase-4 rig figure looked like it settled the S3 question until a controlled rig run disagreed with it by 3.6×.
+- **Open follow-up items:** carried — org forks + upstream PRs (now **0003–0009**, with 0002 **withdrawn as obsolete against the upstream tip** and the `ament_cmake` bug still a separate upstream *issue*), Orin CPU + latency benchmark, P-5, Q-4's own session, Mid-360 lidar→IMU offset verification, SDK2-linked recorder for Q-5, R-4 levers, OSQP maxIter under swarm load, aarch64/target build. **Closed this block:** walking evidence and the interactive-RViz screenshot (offscreen render, carried since Phase 1); §17.3 collision rate and min-clearance (carried since Phase 4); the rig-vs-density question on S3; MCAP/foxglove apt (installed); `max_circle_radius` vs prop radius (patch 0009, bound relaxed); `measurement_variance`'s units (they were always m²; the *value* is now a named 5B task with a measurement path and two tripwires). New —
+  - **DPCBF's guarantee does not cover the policy's velocity-tracking error**, and the oracle arm violates the margin because of it. This is upstream of perception and is the single most consequential new finding for the safety case: sizing `s`, `r_rob` or the horizon against *tracking* error, or closing the loop on realised velocity, is a design question for §10 rather than a tuning one.
+  - **Re-run the walking matrix** on the post-0009 extractor and the `34,6` bring-up, with **≥3 repeats per cell — and treat that as required, not optional.** The three W4 pairs run this block are the evidence for why: the oracle arm alone ranges 0–11 margin violations on an identical seed. A safety claim needs a distribution, not a run.
+  - **Attribute the W4 collision** to a specific tracking failure: the probe should dump the per-obstacle association at the moment clearance crosses zero, which it currently does not.
+  - **Reconcile or retire the Phase-4 rig deltas** (94/186 mm vs a controlled 343/470 mm on the same field and code).
+  - **`s1_static_reference` is still a pre-0007 bag**; regenerate it before anything reads `/sim/gt_obstacles` from it.
+  - **`simulate/build_ros2/` is untracked and not in `.gitignore`** — noted rather than fixed, because `.gitignore` is outside this phase's sanctioned edit list.
+  - Switch the record configs to MCAP now that the packages exist.
+
+- **Suggested next step: 5B is still not a capture session, and its preconditions are unchanged** — Q-1 unanswered, the target build unproven, props unsourced (though the prop constraint is now much easier: `r ≥ 0.30 m`, up to ≈0.55 m). The largest remaining risk is unchanged in identity and unchanged in size: **the on-target build**, and an hour on any arm64 box still retires it.
+
+  But the ranking of the *other* work has changed. **The most consequential thing this block found is not a perception result** — it is that the oracle arm, with exact ground truth and zero latency, still lets the robot's safety disc overlap an obstacle by up to 0.25 m — in 4 of 5 scoreable runs, up to 11 violations in a single 110 s run, and one fall — because DPCBF filters the *commanded* velocity and nothing in the chain models the policy's tracking error. Repetition made this finding *stronger* while dissolving the perception comparison it was found alongside. Perception improvements cannot touch that, and it bounds what the whole subsystem can promise. If a no-robot session comes before 5B, the highest-value use of it is **§10: quantify the policy's velocity-tracking error under the filtered command, and decide whether `s`, `r_rob` and `latency_horizon` should be sized against it** — with the walking harness that now exists, that is a measurement rather than a research question. The second-highest is re-running the walking matrix with repeats, so the safety numbers this block produced stop being single observations.
+
+### 2026-08-02 — Interim block 3 (still between 5A and 5B): the operator runbook
+
+- **Objective:** not a §18 phase and not a feature block. One deliverable — `ros2/doc/operator_runbook.md`, a procedure document that lets an operator with no context sit down at this machine and *run* what Phases 0–5A and the two interim blocks built, see it, and reproduce any §21 number, without reconstructing a command line from nine phase entries. The bar was not "write it" but **"execute it"**: every command in the order the document presents it, with its actual output as the expected observable. That bar is what produced the findings below; a runbook assembled from the prose would have contained none of them.
+
+- **OPERATOR INPUT NEEDED** (unchanged except item 4):
+  1. ~~sudo apt for MCAP/foxglove~~ — DONE in the previous block; both packages verified present this session.
+  2. **Q-1's full answer set for 5B** (still blocking): G1 variant and onboard PC; Mid360 factory mount y/n; robot network and IPs; sudo + internet on the Orin; its shipped Ubuntu/ROS state.
+  3. **arm64 hardware in the lab** — unchanged, and still the cheapest way to retire the on-target build risk.
+  4. **Props: `r ≥ 0.30 m` and `r ≤ 0.52 m`.** The previous block's `≤ ≈0.55 m` is **refined, not withdrawn** — see the range-dependence finding below. Checklist block 0 updated.
+  5. **Fork/PR authorisation** — unchanged; everything short of pushing is done (`ros2/patches/pr/PR_READY.md`).
+
+- **Coverage, stated as the headline because it is the honest measure of the deliverable: 27 of the 34 runnable blocks were executed this session; 7 were not and each says so at its own block; 1 more is partially verified and says that.** Not executed, with reasons: the from-scratch build (§2.2) and the `simulate`/`deploy` builds (§2.4) — both trees were already built and every binary in them was exercised, but a cold rebuild was out of budget; the one-line `bringup.launch.py` (§3.3) — every live block here drives the four launches separately, as every harness in the tree does; `foxglove_bridge` (§4.5) — no browser client to connect with, and starting the bridge proves nothing on its own; `fsm_button_probe` standalone (§6.3) — the walking run it gates transitioned correctly on the first attempt, so there was no failure to point it at; the T6 staleness drill (§6.6); and `hw_source_stub.py` invoked by hand (§8.2) — the two launch tests that drive it passed inside the suite. Partial: the OpenCV `dpcbf_visualizer` (§4.4) — the window was observed on a headless Xvfb rendering its `Waiting for MuJoCo state...` frame while the seam was demonstrably running, and I could not confirm it *refreshes* there; it is documented as a real-display tool.
+
+- **`ros2/README.md`: split, not extended.** It had accumulated two jobs across six phases — workspace provenance and an operational trap list — and was doing both badly for a reader who arrives with a task. Decision: **README keeps provenance** (what is built from source and why, the nine recorded patches with one line each on what they fix, the `tools/` story for other machines, the layout) and **every procedure moved to the runbook**, wholesale rather than duplicated. What moved: the environment-variable block, all eleven runtime notes, the "Run (sim)" section, and the gate-tests table. It went 268 → 115 lines, and the two documents now share no fact, which is the point: two files that disagree about `CYCLONEDDS_URI` in six months would be worse than either alone.
+
+---
+
+#### Defects found by running the documented paths
+
+**Six, of which four had been broken for multiple phases and none of which was visible from reading.**
+
+- **The README's own `colcon test` line does not work in this workspace, and its failure is louder than its consequence.** It was the *first* command executed this session. `colcon test` without `--merge-install` exits immediately with *"The install directory 'install' was created with the layout 'merged'"* — and then the documented follow-up, `colcon test-result`, reads whatever XML is already on disk and cheerfully prints the **previous** run's green summary. I recorded 89/0/2 from a run that had not happened. **Broken since Phase 0** (the workspace has always been merge-install) and invisible because every phase entry ran a working variant while the README carried the broken one, and because the stale-green follow-up makes the mistake self-concealing. Fixed in the README and written up as a trap in the runbook.
+- **The T10 invocation path in the README was wrong** — `install/t10_dds_coexistence/lib/t10_dds_coexistence/t10_smoke` against the real `install/lib/t10_dds_coexistence/t10_smoke`, because `--merge-install` flattens the layout. Same age, same cause: nobody re-ran the documented string.
+- **`perception.rviz` had no display bound to `/obstacles_safe`.** `viz.launch.py` has published that relay since Phase 4, so **the one stream with safety meaning — what DPCBF is actually told — was the only one you could not see.** Fixed (fifth display, `SafeObstacles (Phase 4)`) and verified on a screenshot: the inflated red layer is now visible around each tracked circle.
+- **Two config comments were wrong in opposite directions about the same fact.** The previous block's entry states that the `m²` unit "is now written where the value lives — Appendix A, `obstacle_detector.yaml` and the 5B checklist". Appendix A and the checklist have it; **`obstacle_detector.yaml` carries no unit and no warning at all** — the file was modified in that block, but only its G2 half landed. Worse, **`safety_obstacle_filter.yaml` still carried the *withdrawn* G1 diagnosis** ("the tracker's covariance is NOT in m^2 … a unitless knob"), which that same block corrected. A reader consulting the config would have got the retracted explanation. Both fixed to say the same thing: the maths was always metres, the **value** `1.0 m²` is what is wrong, and it must come from hardware.
+- **The shadow run-tree — a hard precondition of `phase4_live_session.sh` — was documented nowhere.** The script's own header says "see ros2/README.md runtime notes"; the README never gave the commands. `walk_ab_run.sh` builds its own tree inline, which is why this survived: the harness that needed it most already had it. Now runbook §3.2, with the reason the tree exists (the simulator resolves `config.yaml` relative to its own executable and `dpcbf/config/` one level above, so it cannot be reconfigured without editing tracked files, and `dpcbf/` is frozen).
+- **`phase4_live_session.sh` hardcodes `DISPLAY=:1`** where `walk_ab_run.sh` and `walk_overlay_run.sh` both use `${DISPLAY:-:1}`, so it opens the simulator on the operator's desktop rather than honouring an Xvfb. **Recorded, not fixed** — it changes harness behaviour, which is outside a documentation block's remit. The runbook says so at the block.
+
+#### Two measurements taken because a documented claim did not reproduce
+
+- **The G2 sensing limit is RANGE-dependent, and `0.55 m` is only the 2 m figure.** The previous block records "r = 0.30 … 0.55 m now all detect at 2 m and 3 m". Re-run on the same harness (`circle_fit_sweep.py`, analytic rays into the real extractor, full arc): **r = 0.55 m detects at d = 2 m — fit 0.5796, just under the 0.60 gate — and is DROPPED at d = 3 m and d = 4 m**; r = 0.52 m detects at 2, 3 and 4 m (fit 0.5624 / 0.5699). The mechanism is the block's own geometry read in the other axis: the visible chord, hence the fit, grows with range through `sqrt(1−(r/d)²)`, so the same prop passes the gate close in and fails it further out. It is the same intermittency G2 described for occlusion, in range instead. **Props are surveyed at 1–3 m, so the operator constraint is `r ≤ 0.52 m`**; 0.55 m is the close-range-only number. `phase5b_checklists.md` block 0 corrected; rows in `evidence/runbook/circle_fit_limit_by_range.csv`.
+- **`s1_static_reference` was still the pre-0007 bag** (a named follow-up from the previous block). **Regenerated:** 28.885 s, 98.1 MiB, 289 clouds, md5 `3466e2cf54b1f3374497796c33fbcbbb` (pre-0007: 27.87 s / 92.9 MiB / `d372a619…`), and its consumer re-verified — `test_projection_replay` gives 289 `/scan` frames over 28.8 s sim time → 10.00 Hz, 0.0 % drop, T9 288/0 misses. One thing worth recording because it cost two runs: **match the record wall-clock to the realtime factor, not to the target duration.** With the perception container also running the sim goes at ≈0.44 RT and 30 s of wall clock bought a 13.1 s bag; without it the factor is ≈1.0. Noted in `test_fixtures/README.md`.
+
+#### The RViz screenshot, carried since Phase 1, is closed
+
+Phases 1–4 recorded the interactive RViz screenshot as blocked ("GNOME blocks unattended screenshots"); interim block 2 closed the *evidence* half with an offscreen matplotlib render and explicitly said which it was. The screenshot itself was never blocked in the way recorded: **run RViz against a private `Xvfb` and grab that display** — `Xvfb :77`, `DISPLAY=:77` with the software-GL variables, then `PIL.ImageGrab.grab(xdisplay=':77')` (Pillow 9.0.1, the system one). No compositor, no desktop, nothing on the operator's screen. RViz renders at **31 fps** under software GL there, which is interactive enough to be worth using and not only screenshotting. Evidence: `evidence/runbook/rviz_bag_replay.png` — the `s1_surveyed` replay with all five layers: cloud arcs with occlusion shadows behind every obstacle, three tracked cylinders sitting on their GT circles with uid labels, and the newly-visible safe inflation. *`ImageGrab` grabs the whole display, so give RViz its own — pointing it at `:1` captures the operator's desktop.*
+
+#### Measured this session (all of it reproduction, none of it new capability)
+
+| block | result | cost |
+|---|---|---|
+| full test suite | **89 tests, 0 errors, 0 failures, 2 skipped** (`test_bringup_sim` — no live sim; `hw_config_check` — placeholder IPs) | **4 min 54 s**, twice, unchanged before and after this block's edits |
+| bag replay, projection probe | 10.0 Hz on all three topics, drop 0.0 %, T9 289/0, cloud→scan p50 0.60 / p95 1.04 ms | 44 s |
+| bag replay, full chain | cloud→safe p50 **0.76** / p95 **1.28** ms, container **2.9 %** of one core | 44 s |
+| live sim stack | cloud→safe p50 **1.48** / p95 **2.18** ms, container **4.6 %**, sidecar **30.3 %**, 451 clouds / 45 s, T9 449/0 | ~1 min to first frame |
+| **walking, W1 oracle** | window 35.2 s, path 15.14 m at 0.43 m/s, pelvis min **0.777 m**, tilt max **0.044 rad**, no fall, **0 margin violations**, min clearance **+0.019 m**, tracked→GT p50 **74.2 mm** | **1 min 29 s** |
+| walking overlay, offscreen | 5 panels from 2747 frames over 50.0–80.5 s | 1 min 32 s |
+| offline A/B, S1–S4 | ratios **0.9565 / 1.0000 / 0.9978 / 0.8265 / 0.9456** — every one identical to the post-0009 record; containment at F=0 s1/s2 100.000 %, s3 70.895 % (record: 70.895 %) | 3 min 48 s |
+| calibrators | pooled position variance **1.775e-06 m²** (1σ 1.3 mm), "563431× too large"; `calibrate_k_sigma` **refuses** at σ p50 583.6 mm | seconds |
+| T1 oracle equivalence | **PASS** | 3.79 s |
+| T2 wall occlusion / T3 pattern envelope | **PASS** / **PASS** (17 608 expected hits, 0 through; −7.2123…+52.1640°, 99.782 % strict) | **0.11 s / 0.09 s** |
+| T10 DDS coexistence | **PASS**, one `libddsc.so.0.10.2` in the maps | 10.4 s |
+| driver with no device | `bind failed` / `Init lds lidar fail!`, **no `/livox/*` topic at all**, survived SIGINT — `pkill -9` required | 25 s |
+| `hw_config_check.py` | exit **2**, naming the unassigned placeholder IP | instant |
+
+The two gates that cost **0.1 s each** are worth calling out on their own: T2 and T3 are the raycast-correctness and pattern-envelope guarantees the entire simulated evaluation rests on, and there has never been a cost-based reason not to run them.
+
+- **Helper script added: none.** The one plausible candidate — the walking startup — already has `walk_ab_run.sh`, and it works: one command, 89 s, correct FSM transitions, band procedure and all. What was missing was never a script, it was the *explanation* of the four constraints it encodes (`g1_ctrl` first, staggered chords, hold-then-lower, `34,6` over `24,4`), which is now runbook §6.1 with each constraint's failure signature. The shadow run-tree (§3.2) is documented as explicit commands rather than wrapped, so the pieces stay runnable by hand.
+- **Files added:** `ros2/doc/operator_runbook.md` (1191 lines); `ros2/evidence/runbook/{rviz_bag_replay.png, walk_overlay_reproduced.png, circle_fit_limit_by_range.csv}`.
+- **Files modified (all inside `ros2/`):** `README.md` (rewritten, 268 → 115 lines), `doc/phase5b_checklists.md` (prop bound), `test_fixtures/README.md` (`s1_static_reference` regenerated + the realtime-factor note), `g1_perception_bringup/rviz/perception.rviz` (+`SafeObstacles` display), `g1_perception_bringup/config/{obstacle_detector.yaml, safety_obstacle_filter.yaml}` (the two wrong σ comments), and the regenerated `test_fixtures/s1_static_reference/` bag (gitignored).
+- **Complete outside-`ros2/` edit list: this §21 entry, and nothing else.** `dpcbf/` byte-for-byte identical to `f111cfa` (`git diff f111cfa -- dpcbf/` empty), and `deploy/`, `src/`, `scripts/` have zero diff — verified, not asserted. `simulate/` was not touched this block (the `M` on `main.cc` and `CMakeLists.txt` in `git status` is the previous block's uncommitted work).
+- **Test counts: 89 → 89.** No tests were added; a documentation block should not need any. The suite was run twice — once as the first executed command of the session and once after every edit — with identical results, which is the check that the config-comment, RViz-layout and fixture changes are inert.
+- **Lessons learned:** *a documented command that nobody re-runs decays silently, and the decay can be self-concealing* — the broken `colcon test` line hid behind a follow-up command that prints the previous run's success, so the documentation was wrong AND the wrongness produced a green result. *"Verify against the checkout, not the doc" applies to your own log too*: the previous entry's claim about where the `m²` unit was written did not survive `grep`, and one of the two files named carried the retracted version of the finding. *A visualisation config is documentation*: the layout had silently disagreed with the launch file for two phases, and the effect was that the only stream with safety meaning was invisible by default. And *reproduction is cheap and worth budgeting for* — every §17.3 ratio and every gate came back identical, which is what makes the one number that did **not** reproduce (the 0.55 m radius limit at 3 m) worth acting on rather than explaining away.
+- **Open follow-up items:** carried unchanged — org forks + upstream PRs (0003–0009, 0002 withdrawn as obsolete, the `ament_cmake` bug as a separate issue), Orin CPU + latency benchmark, P-5, Q-4's own session, Mid-360 lidar→IMU offset verification, SDK2-linked recorder for Q-5, R-4 levers, OSQP maxIter under swarm load, aarch64/target build, re-running the walking matrix with ≥3 repeats on the post-0009 extractor and the `34,6` bring-up, attributing the W4 collision, reconciling or retiring the Phase-4 rig deltas, switching the record configs to MCAP, and `simulate/build_ros2/` not being in `.gitignore`. **Closed this block:** the interactive-RViz screenshot (carried since Phase 1 — it was never actually blocked); `s1_static_reference`'s pre-0007 status; the undocumented shadow run-tree. **New —** `phase4_live_session.sh` should honour `$DISPLAY` like its two siblings (one-word change, deliberately not made here); the runbook's seven unexecuted blocks are worth closing opportunistically, the cheapest being the T6 drill and the one-line bringup; and **the from-scratch build time (~40 min) is still an estimate, not a measurement** — the next machine that builds this workspace should time it and put the number in the runbook.
+- **Suggested next step: unchanged, and the runbook does not displace it.** 5B's three preconditions are still unmet (Q-1, the target build, props — now `r ∈ [0.30, 0.52] m`). The largest risk is still the on-target build and an hour on any arm64 box still retires it. The highest-value no-robot work is still the previous block's verdict: **§10 — quantify the policy's velocity-tracking error under the filtered command and decide whether `s`, `r_rob` and `latency_horizon` should be sized against it**, since the oracle arm violates the margin for reasons no perception work can touch. That measurement is now *cheaper* than it was: the walking harness is documented end to end, a 70 s single-arm run costs 89 s of wall clock, and §6.5 says what a good run looks like — so the loop of "run, read the trace, change a constant, run again" is a thing an operator can now do without reconstructing it first.
+
+---
+
+### Interim block 3 — Live 2-D overlay: estimated vs ground-truth obstacles, and the DPCBF constraint boundary
+
+**Operator ask, carried unchanged:** *"2D로 estimated obstacle + 실제 obstacle 약간
+겹쳐 보이게끔, + DPCBF로 parabola 어디로 생기는지도 라이브로 비주얼라이즈"* — three
+things, live, during a walking run: (1) estimated obstacles drawn on top of
+ground truth, deliberately overlapping, so per-obstacle error is readable at a
+glance rather than as a percentile in a probe's JSON; (2) the DPCBF constraint
+boundary, where it sits relative to those obstacles, updating live; (3)
+top-down 2-D, because that is the plane the filter reasons in.
+
+#### The headline: the "parabola" is in VELOCITY space, and that changed the design
+
+This was the first task and it invalidated the plan's constraint layer, exactly
+as the plan allowed for. Derived from the running source, not the name:
+
+- The barrier is `h = x̃ + A·(λ·ỹ² + k_μ·d_safe)` with `A = √(s²−1)/r_safe` and
+  `λ = k_λ·d_safe/v_safe` — `dpcbf/src/dpcbf_safety_filter.cpp:404`. So `h = 0`
+  is `x̃ = vertex_x − curvature·ỹ²`, and `Filter()` itself already names those
+  two coefficients at `dpcbf_safety_filter.cpp:590-591`.
+- **`(x̃, ỹ)` is the relative velocity `v_obs − v_robot` rotated into the
+  obstacle line of sight** (`dpcbf_safety_filter.cpp:385-386`). Both axes are
+  **m/s**. `dpcbf/include/dpcbf/dpcbf_safety_filter.h:47` states it outright:
+  *"Frozen-parameter h=0 parabola in the obstacle Line-of-Sight velocity frame."*
+
+It is "both" only weakly: the parabola's *shape* is parameterised by workspace
+quantities (`d_safe`, `r_safe`) so it deforms as the robot moves, but the plane
+it lives in is velocity. **Drawing it in `odom` would be a category error**, and
+the operator was asked before anything was built. Decision taken: **workspace
+layers in `odom`; the parabolas in their own `dpcbf_velocity_plane` TF frame
+beside the robot, axes labelled m/s on every card. No world-frame parabola.**
+
+Two corollaries the plan did not anticipate, both from source:
+
+- **The existing OpenCV `dpcbf_visualizer` is a trap, not a reference.** It
+  *does* draw a world-frame curve (`dpcbf_visualizer.cpp:204-225`) — but it is
+  the same velocity-space curve scaled by `velocity_arrow_seconds = 1.0` and
+  anchored at the **robot**, i.e. metres = (m/s)×(1 s). A one-second-lookahead
+  diagram, not an envelope around the obstacle. Its bounding config values
+  (`world_parabola_lateral_limit: 1.0`) are m/s on a pane scaled in metres.
+  Porting it into RViz would have reproduced the error on a metre grid, where
+  it reads as far more authoritative.
+- **There is no single constraint boundary.** The shipped config runs
+  `ecbf_enabled: true` *and* `slack_enabled: true`, so every selected obstacle
+  contributes a second row — a distance barrier `|p|² − (r_rob+r_obs)²`
+  (`dpcbf_safety_filter.cpp:438-480`) whose zero set **is** honest world
+  geometry — and both families are soft. The operator chose to draw both. The
+  eCBF circle is the only constraint geometry that belongs on the metre grid.
+
+Also settled from source, because drawing envelopes around obstacles the filter
+ignored is the second way an overlay lies: **selection is not nearest-first.**
+The gate is centre-to-centre `distance ≤ p_max` (radius *not* subtracted), and
+the shipped `obstacle_priority: 1` orders by **closing alignment** descending
+with distance only as tie-break, then truncates to `default_num_constraints`.
+
+#### The validation gate — two numbers, deliberately not one
+
+Blurring "is the math right" and "are the inputs good" into a single tolerance
+would have hidden both. `boundary_check` therefore has two modes.
+
+**`math` (the CTest, `dpcbf_boundary_recomputation`) — BIT-EXACT.** It replays
+every recorded `Filter()` call, runs the **frozen** `DpcbfSafetyFilter` as the
+oracle and the overlay's own `dpcbf_boundary.h` on identical inputs, and
+compares selected set, order, and every coefficient:
+
+```
+BOUNDARY PASS: 38402 ticks checked (of 38402 records, stride 1), 214085 selected-obstacle rows
+  selected set + order: exact on every tick
+  max |d vertex_x|  = 0 m/s   |d curvature| = 0 s/m   |d h| = 0   |d eCBF h| = 0 m^2   (tol 1e-12)
+```
+
+Every delta is **identically zero** — not "within tolerance". The stated `1e-12`
+is a round-off budget, not a tuned threshold: both sides perform the same
+operations in the same order on the same doubles, so exact equality is the
+expected outcome and the tolerance was never widened to make anything fit.
+Cost **3.07 s**, stride 1 (no sampling), SKIP 77 without the fixture.
+
+**`join` (a measurement, not a gate) — this is where the honest limit is.**
+Join rule: **nearest-preceding capture tick** (last 1 kHz record with
+`t ≤ t_safe`), max gap 0.15 s, **no interpolation** — the capture's obstacle set
+is piecewise-constant between perception frames, so interpolating would invent
+states the filter never saw. Keyed on the sim-time stamp of the
+`/obstacles_safe` frame the overlay consumed. On a W4 walking run (35.8 m, no
+fall): all 1186 records joined, 0 dropped; **selected set identical on 63.3 %**
+of ticks; Jaccard disagreement mean 0.061 (≈94 % membership overlap);
+`|d body speed|` mean **0.048** m/s; `|d vertex_x|` mean 0.191 m/s;
+`|d curvature|` mean 0.234 s/m.
+
+**Why, and why no tuning closes it.** The seam gets the 1 kHz instantaneous
+pelvis twist; the overlay must **differentiate `/odom` pose at 100 Hz**, because
+`sim_mjlidar_bridge` publishes **no twist** — `MjState` carries no `qvel` by
+design (`bridge_node.py:9`). *The plan's §2 assumed `/odom` twist was
+available; it is not.* Membership is close; it is the **ordering** that
+diverges, because ranking by closing alignment reshuffles on millimetre-per-
+second differences. Consequence, applied: the workspace layers are
+authoritative (read straight off the topics) and **the `selected` and `vel_*`
+layers ship labelled INDICATIVE in the marker text itself, on screen** — the
+`calibrate_k_sigma.py` precedent, not a quiet caveat in a doc.
+
+#### A tuning decision that was wrong until it was measured
+
+The first join reported mean `|dv|` **0.554** m/s and 48.9 % set agreement, and
+an offline sweep of the smoothing constant appeared to show smoothing did not
+matter. **Both were taken from a run in which the robot fell at 40.9 s** (path
+0.569 m — it never walked); a thrashing pelvis is not a walking one. Re-swept
+against a genuine walking window: mean `|dv|` **0.032** m/s at `τ=0`, 0.032 at
+0.02, 0.049 at 0.05, **0.077 at 0.15** — smoothing *costs* accuracy here,
+because `/odom` pose is exact and lag, not noise, dominates. The shipped
+`vel_tau_s` was changed **0.15 → 0.02** (τ=0's mean, better p95: 0.055 vs
+0.094 m/s). Recorded because the failure mode generalises: **check `fell_at_s`
+before quoting any number derived from a walking capture** — now a trap-index
+entry.
+
+#### Cost, against the §17.4 budget
+
+Measured over 45 s of a walking run, % of one core, from `/proc` directly:
+
+| Process | W1 | W4 (90 obstacles) | §17.4 record |
+|---|---|---|---|
+| **`dpcbf_overlay`** | **1.44 %** | **2.02 %** | new |
+| `component_container` | 4.68 % | 5.31 % | 4.6 % |
+| `sim_mjlidar_bridge` | 27.75 % | 35.92 % | 30.3 % |
+| `rviz2` | 119 % | 191 % | — |
+
+Container and sidecar sit on their budget, so **the overlay moves neither** — it
+is a separate process outside the perception container, publishes at 10 Hz (not
+GT's 50 Hz) and subscribes only. The genuinely expensive thing on this machine
+is **RViz under software GL at 119–191 % of a core**, which is the pre-existing
+cost of looking and not of this layer.
+
+#### Executed versus written-but-unverified
+
+**Executed, on this machine, with output recorded:** the §0 source derivation;
+the `math` gate (38 402 ticks); 7 new unit tests; the full suite twice; **six
+live walking runs** (W1 ×2, W4 ×4 — W4 fell at band release in 3 of 4, W1
+walked every time); the `join` on four captures; the Xvfb + `PIL.ImageGrab`
+screenshot path; the **bag-replay GT-absent degradation**, verified by topic
+inspection rather than by eye — with `/sim/gt_obstacles` excluded the banner
+reads `GT UNAVAILABLE - estimated only` and the `gt`, `error`, `unpaired_gt`
+and `unpaired_tracked` namespaces are **absent** while every estimated layer
+stays; the CPU measurement; `dpcbf/` and `deploy/` verified untouched.
+
+**Written but NOT verified:** the **T6 staleness rendering**. The purple
+colour-shift and `*** stop: SET RETAINED ***` banner are implemented and driven
+by `/dpcbf/status`'s level, and the banner was observed rendering its live
+(`fresh`) and its no-status (`?`) forms — but the drill itself (§6.6) was not
+run, so the DEGRADE/STOP appearance is **unverified**. Marked as such here and
+in the runbook. Also unverified: hardware behaviour (no hardware), and the
+`error_magnify` debug path beyond its always-visible warning marker.
+
+#### Defects found by running the documented paths
+
+- **The documented rebuild trap bit, and cost a live run.** `viz.launch.py` and
+  `perception.rviz` are **installed, not read from source** (runbook §2.3). Both
+  were edited and neither rebuilt, so the run came up with the old four relays
+  and no overlay node — **silently**, because a launch argument that selects
+  nothing looks exactly like one that is off. The trap was already documented
+  for *configs*; it is now documented for *launch files* too, with this
+  failure signature, because "four relays and no error" is not obviously a
+  build-staleness symptom.
+- **`proc_cpu.py` matched the measuring process itself.** Its own argv carries
+  every name it was asked to search for, so each target reported a phantom
+  extra pid — the same self-match class as the `pkill -f component_container`
+  trap in §3.4. Found because the first CPU report said `2 pid(s)` for a
+  single-process node. **Fixed** (exclude `os.getpid()`); all figures above are
+  post-fix.
+- **RViz's committed layout was unreadable in 2-D.** With `TopDownOrtho` the
+  point cloud covers every other layer from above, and the `Odometry` display's
+  100-arrow trail fans across exactly the area the new layers occupy. Three
+  defaults changed for legibility, all one tick away and all documented:
+  `LivoxCloud` and `RawObstacles` off, `Odom` `Keep: 100 → 12`.
+
+#### Deliverables and counts
+
+- **Node:** `g1_perception_utils/src/dpcbf_overlay_node.cpp` — placed beside
+  `obstacles_marker_relay` rather than in a new package, because it is the
+  sixth marker layer alongside the four relays and a package for one executable
+  buys nothing. Outside the perception container. Read-only w.r.t. the running
+  system: it subscribes, publishes one `MarkerArray`, one visualization TF, and
+  an optional JSONL. **No new workspace dependency** — `yaml-cpp` is already
+  built against by `dpcbf`, `obstacle_detector` and ROS 2's own vendor package;
+  it is used so the overlay reads the **same** `dpcbf_config.yaml` the simulator
+  loaded instead of re-declaring the parameters as ROS defaults, which is how a
+  viewer starts lying confidently. The `dpcbf_config` parameter is **required**;
+  the node refuses to start without it.
+- **Shared math:** `dpcbf_ros_adapter/include/dpcbf_ros_adapter/dpcbf_boundary.h`
+  (+ `_config.h`) — one implementation consumed by both the node and the gate,
+  so the picture and its proof cannot drift. Same arrangement as `dpcbf_seam.h`.
+- **Gate:** `dpcbf_ros_adapter/tools/boundary_check.cc`, built from
+  `simulate/CMakeLists.txt` because it needs the frozen dpcbf static libs —
+  the established `t1_replay.cc` / `ab_eval.cc` arrangement, source in the
+  adapter package to respect the outside-`ros2/` budget.
+- **Harnesses:** `walk_overlay_rviz_run.sh` (one command: shadow tree, bring-up,
+  overlay, capture, JSONL, screenshots, CPU — **2 min 22 s**) and `proc_cpu.py`.
+- **Docs:** runbook **§4.6** (preconditions → command → layer/z table → how to
+  read a correct picture → what failure looks like → the gate → cost), plus
+  §4.1's layout note, the §5.2 gate table, §11.1 topics and **five new trap-index
+  entries**.
+- **Evidence:** `ros2/evidence/overlay/rviz_dpcbf_overlay_w4.png` (W4 walking:
+  five blue `selected` rings, cyan `MISS` badges, orange discs on green rings,
+  three velocity cards with the shaded `h < 0` half), plus the gate and join
+  outputs and the run metrics.
+- **Test counts: 89 → 97**, 0 errors, 0 failures, 2 expected skips —
+  `dpcbf_ros_adapter` 18 → 26. Plus the new **CTest
+  `dpcbf_boundary_recomputation`** in `simulate/build_ros2` (all 3 there pass),
+  which is outside the colcon count exactly as `t1_oracle_equivalence` is.
+- **Complete outside-`ros2/` edit list: `simulate/CMakeLists.txt`** (one target,
+  one `add_test`) **and this §21 entry.** `dpcbf/` and `deploy/` are
+  byte-for-byte untouched — `git status --porcelain dpcbf deploy` empty,
+  verified not asserted. `perception.launch.py` gained no conditional (D4); the
+  overlay is GT-consuming and lives in `viz.launch.py` behind `overlay:=on|off`.
+
+#### Follow-ups
+
+**New:** run the **T6 drill with the overlay up** to verify the staleness
+rendering (the one written-but-unverified piece; cheap, and §6.6 is already an
+unexecuted block worth closing anyway); consider publishing `qvel` in `MjState`
+or twist in `/odom`, which would make the constraint layer authoritative rather
+than indicative — but it changes a message every fixture bag carries, so it is a
+deliberate decision, not a tidy-up; the overlay cannot plot **commanded vs
+filtered velocity** inside the cards because neither is on any topic (the seam
+holds them), which would need a small diagnostic publisher; and W4's **fall at
+band release in 3 of 4 attempts** deserves attribution — it is a harness
+question, not a product one, but it makes W4 expensive to use for evidence.
+**Carried unchanged:** everything in the previous block.
+
+**Suggested next step — unchanged, and now better instrumented.** 5B's three
+preconditions are still unmet (Q-1, the target build, props `r ∈ [0.30, 0.52] m`);
+the arm64 box still retires the largest risk in an hour. The highest-value
+no-robot work is still **the oracle arm's margin violations under walking**, and
+this overlay is now the natural instrument for it: the `selected` layer shows
+*which* obstacles became QP rows and in what order, the velocity cards show
+`h` going negative *as it happens*, and the eCBF circle shows the distance
+barrier being breached in metres. One caveat to carry into that work, and it is
+the reason the gate was split in two: **under `estimated` the constraint layers
+are indicative, not authoritative** — for oracle-arm forensics, drive them from
+the 1 kHz capture through `boundary_check`, where the geometry is bit-exact,
+and use the live view to know where to look.

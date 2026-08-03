@@ -63,4 +63,34 @@ git -C src/external/livox_ros_driver2 apply --check ../../../patches/0005-livox-
 git -C src/external/direct_lidar_inertial_odometry apply --check ../../../patches/0006-dlio-cloud-subscription-sensor-data-qos.patch 2>/dev/null \
   && git -C src/external/direct_lidar_inertial_odometry apply ../../../patches/0006-dlio-cloud-subscription-sensor-data-qos.patch \
   || echo "DLIO QoS patch already applied"
+# P-3 (§9.6 sigma term / D6's one sanctioned message change, fired in the
+# interim block after 5A). The tracker keeps a full posterior estimate-error
+# covariance per track but publishes none of it, so `safety_obstacle_filter`
+# had no way to widen a circle the tracker itself is unsure about. Patch 0007
+# adds `float64[3] covariance` = [var_x, var_y, var_r] to CircleObstacle and
+# fills it from the per-axis KFs' P(0,0) in publishObstacles(). Only meaningful
+# post-P-2, which made P start from R instead of upstream's identity.
+# NOT upstreamable as-is (it changes a public message); carried in the fork.
+git -C src/external/obstacle_detector_2 apply --check ../../../patches/0007-obstacle-detector-p3-per-track-covariance.patch 2>/dev/null \
+  && git -C src/external/obstacle_detector_2 apply ../../../patches/0007-obstacle-detector-p3-per-track-covariance.patch \
+  || echo "obstacle_detector P-3 patch already applied"
+# Interim block: declare the driver's build-order dependency on
+# livox_sdk2_vendor. colcon orders packages from package.xml alone, and nothing
+# said the driver needs the vendor package's liblivox_lidar_sdk_shared.so in the
+# prefix first. The dev machine's PARALLEL build happened to schedule them in a
+# working order and hid this through all of Phase 5A; a sequential build on
+# another machine fails at CMakeLists.txt:249 find_library instead.
+git -C src/external/livox_ros_driver2 apply --check ../../../patches/0008-livox-driver-declare-sdk-vendor-dependency.patch 2>/dev/null \
+  && git -C src/external/livox_ros_driver2 apply ../../../patches/0008-livox-driver-declare-sdk-vendor-dependency.patch \
+  || echo "livox driver vendor-dependency patch already applied"
+# P-4 (§9.6, workstream C gap G2). `detectCircles()` adds radius_enlargement to
+# the fitted radius BEFORE testing max_circle_radius, so the shipped 0.60/0.17
+# really cut at a 0.43 m fit — ~0.397 m of true radius once the fit's +8.4%*r
+# bias is included — with no diagnostic, and intermittently, because occlusion
+# shortens the chord and brings the same obstacle back under the cut. Patch
+# 0009 gates on the fit (making max_circle_radius mean what §9.6 says) and
+# counts + throttle-logs BOTH silent drop paths. Upstream-able.
+git -C src/external/obstacle_detector_2 apply --check ../../../patches/0009-obstacle-detector-p4-fit-radius-gate-and-drop-observability.patch 2>/dev/null \
+  && git -C src/external/obstacle_detector_2 apply ../../../patches/0009-obstacle-detector-p4-fit-radius-gate-and-drop-observability.patch \
+  || echo "obstacle_detector P-4 patch already applied"
 echo "External sources ready."

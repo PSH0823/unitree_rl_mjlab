@@ -1,195 +1,115 @@
 # DPCBF Perception — ROS2 workspace
 
-Colcon workspace for the perception subsystem. Architecture, contracts and
-phase gates: `../DPCBF_Perception_Subsystem_ROS2_Architecture.md` (the single
-source of truth).
+Colcon workspace for the perception subsystem.
 
-## Environment hygiene (read before building — R-11)
+- **Architecture, contracts, phase gates, the progress log:**
+  `../DPCBF_Perception_Subsystem_ROS2_Architecture.md` (the single source of truth).
+- **How to run any of this** — bring the stack up, see it in RViz, walk the
+  robot, reproduce a §21 number, work out why nothing is arriving:
+  **[`doc/operator_runbook.md`](doc/operator_runbook.md)**.
+- **The robot session:** [`doc/phase5b_checklists.md`](doc/phase5b_checklists.md).
 
-This machine's shell auto-activates a **conda env with Python 3.12**, which
-shadows ROS2 Humble's system Python 3.10 and silently breaks rclpy, colcon
-and every ament_python package. Every build/run command below must see system
-python first:
-
-```bash
-export PATH=/usr/bin:$PATH          # puts /usr/bin/python3 (3.10) first
-hash -r
-source /opt/ros/humble/setup.bash
-source install/setup.bash            # after the first build
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp   # D2 — mandatory
-export ROS_DOMAIN_ID=0                          # matches simulate/config.yaml & SDK2
-```
-
-Launch files pin the sidecar to system python; nothing in this workspace may
-ever run under the conda interpreter.
-
-## No-sudo reality of this machine (2026-08-01)
-
-`sudo` needs a password and apt is unusable non-interactively, so packages the
-architecture assumed as apt binaries are **built from pinned source** in this
-workspace instead: `cyclonedds` 0.10.2, `cyclonedds-cxx` 0.10.2,
-`rmw_cyclonedds_cpp` (humble), `pointcloud_to_laserscan` (humble), and
-`pcl_ros` 2.6.1 (Phase 2 — the Humble BINARY pcl_ros 2.4.5 ships **no**
-filter components at all, so the CropBox stage is impossible without this
-pin; patch 0002 makes its output publisher SensorData per §7.1). The
-`obstacle_detector_2` fork carries two recorded patches (Phase 3):
-0003 (P-1: composable-node components, SensorData `/scan` subscription —
-upstream's Reliable one never matches a best-effort laser publisher —
-publishers at §7.1 depth 5, TF lookup at the scan stamp, and an upstream
-grouping bug fix: `begin()++` double-counted the first scan point of every
-first group, corrupting its circle fit) and 0004 (P-2: measurement-driven
-tracker — predict+correct on arrival with dt from header stamps, no wall
-timer, measurement-stamped output, two-point track initiation with matching
-init covariance, radius-residual weight 0.3). The
-Unitree side (`unitree_sdk2`, C++ `unitree_dds_wrapper` headers) was **never
-installed on this machine** (the doc's `/opt/unitree_robotics` does not
-exist); both are pinned in `deps.repos` and built here too. Side effect: the
-whole stack shares ONE CycloneDDS — the R-3 mitigation by construction.
-
-Phase 5A adds the hardware stack to the same treatment: `Livox-SDK2` (v1.3.1)
-is plain CMake with no `package.xml`, so it is COLCON_IGNOREd and built into
-the merged prefix by the `livox_sdk2_vendor` package (upstream's instructions
-install to `/usr/local`); `livox_ros_driver2` (1.2.6) carries patch 0005
-(`package.xml` + a `colcon.pkg` with `-DROS_EDITION=ROS2 -DDISTRO_ROS=humble`,
-because upstream's `build.sh` would `rm -rf` this workspace's build/install
-trees, plus the `/livox/imu` `frame_id` fix); DLIO (`feature/ros2`) carries
-patch 0006 (cloud subscription SensorData QoS, `/odom` depth 10).
-
-Still missing until someone runs apt with sudo:
-`ros-humble-rosbag2-storage-mcap` (bags record as sqlite3 until then),
-`ros-humble-foxglove-bridge`.
-
-**No aarch64 build is possible on this machine** (no cross toolchain, no
-`qemu-user-static`/binfmt handler — registering one needs root; `podman` can
-pull arm64 images but cannot execute them). The Orin build is a robot-day /
-Q-1 item; see `doc/phase5a_seam_audit.md`.
+This file is the workspace's **provenance**: what it is made of, why each
+external is pinned or patched, and how to build it. Procedures live in the
+runbook and are not repeated here — including the environment variables, the
+runtime traps, and the gate-by-gate commands, all of which used to be in this
+file and moved wholesale on 2026-08-02 so that there is exactly one copy of
+each.
 
 ## Build
 
 ```bash
 cd ros2
-vcs import src < deps.repos          # pinned SHAs only — never floating
+./setup_external.sh                  # vcs import (pinned SHAs) + patches 0001–0009
 colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon test  --merge-install --packages-select \
+    dpcbf_ros_adapter safety_obstacle_filter g1_perception_utils \
+    g1_description g1_perception_bringup sim_mjlidar_bridge
 ```
 
-`--merge-install` is required: unitree_sdk2 and the ROS packages must share
-one prefix so simulate/deploy find both through a single `CMAKE_PREFIX_PATH`
-entry, and so exactly one `libddsc.so.0` exists at runtime (R-3).
+`--merge-install` is required **on both commands**: `unitree_sdk2` and the ROS
+packages must share one prefix so simulate/deploy find both through a single
+`CMAKE_PREFIX_PATH` entry and exactly one `libddsc.so.0` exists at runtime
+(R-3) — and colcon refuses to operate on a merged layout without the flag, so
+plain `colcon test` errors out and the follow-up `colcon test-result` then
+cheerfully prints the *previous* run's summary. See the runbook §5.1 for that
+trap and for why the test query must be scoped to these six packages.
 
-`colcon test && colcon test-result --verbose` runs the unit tests + T7.
+The simulator and the deploy FSM are plain CMake, not colcon; their build
+commands are in the runbook §2.4.
 
-## simulate with the ROS2 module (Phase 1)
+## What is built from source here, and why
 
-```bash
-cd ../simulate && mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DUNITREE_MUJOCO_WITH_ROS2=ON \
-      -DCMAKE_PREFIX_PATH=$PWD/../../ros2/install
-make -j$(nproc)
-```
+`sudo` needed a password when this workspace was assembled, so packages the
+architecture assumed as apt binaries are **built from pinned source** instead:
+`cyclonedds` 0.10.2, `cyclonedds-cxx` 0.10.2, `rmw_cyclonedds_cpp` (humble),
+`pointcloud_to_laserscan` (humble), and `pcl_ros` 2.6.1 — the Humble **binary**
+`pcl_ros` 2.4.5 ships *no* filter components at all, so the CropBox stage is
+impossible without that pin. The Unitree side (`unitree_sdk2`, the C++
+`unitree_dds_wrapper` headers) was never installed on this machine either
+(`/opt/unitree_robotics` does not exist) and is pinned and built here too. Side
+effect: the whole stack shares ONE CycloneDDS — the R-3 mitigation by
+construction.
 
-With the option OFF (default) simulate builds and behaves exactly as at
-baseline `f111cfa`. With ON it publishes `/clock`, `/sim/mj_state`,
-`/sim/gt_obstacles` and dumps the compiled mirror model to
-`/tmp/unitree_mujoco_mirror_model.xml` (override: env
-`UNITREE_MUJOCO_MIRROR_XML`) — the sidecar loads THAT file, never the raw
-scene, because the obstacle mocap bodies are added to the spec at runtime.
+Phase 5A added the hardware stack to the same treatment: `Livox-SDK2` (v1.3.1)
+is plain CMake with no `package.xml`, so it is COLCON_IGNOREd and driven into
+the merged prefix by the `livox_sdk2_vendor` package (upstream installs to
+`/usr/local`); `livox_ros_driver2` (1.2.6) and DLIO (`feature/ros2`) are pinned
+and patched.
 
-## Run (sim)
+`ros-humble-rosbag2-storage-mcap` and `ros-humble-foxglove-bridge` **are now
+installed** (the long-standing operator ask, closed in interim block 2).
+`record.launch.py` still defaults to sqlite3; switching it is an ordinary
+follow-up.
 
-```bash
-# terminal 1 — simulator (needs a scene config; see repo README)
-./simulate/build/unitree_mujoco
+## Recorded patches
 
-# terminal 2 — perception bringup
-ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
-```
+Applied by `setup_external.sh`, each `git apply --check`ed first so the script
+is idempotent. PR-ready, minimal versions of the upstreamable ones are split out
+under `patches/pr/` (`PR_READY.md`); nothing has been pushed.
 
-## Runtime notes (hard-won, do not rediscover)
+| # | Target | What and why |
+|---|---|---|
+| 0001 | `unitree_dds_wrapper` | restores the simulator-facing joystick API the pinned SHA lacks (the original build machine ran a modified copy that was never pushed) |
+| 0002 | `pcl_ros` | filter output publisher → SensorData QoS (§7.1). **Obsolete against the upstream tip**, which added `QosOverridingOptions`; delete it and set the override when the pin moves past `e264aff1` |
+| 0003 | `obstacle_detector_2` | P-1: componentization, `/scan` subscription SensorData (upstream's Reliable never matches a best-effort laser publisher), publishers at §7.1 depth 5, TF lookup at the scan stamp, and an upstream grouping bug (`begin()++` double-counted the first point of every first group, corrupting its circle fit) |
+| 0004 | `obstacle_detector_2` | P-2: measurement-driven tracker — predict+correct on arrival with dt from header stamps, no wall timer, measurement-stamped output, two-point initiation with matching init covariance, radius-residual weight 0.3 |
+| 0005 | `livox_ros_driver2` | `package.xml` + `colcon.pkg` (upstream's `build.sh` would `rm -rf` this workspace's build/install trees) and the `/livox/imu` `frame_id` fix |
+| 0006 | DLIO | cloud subscription SensorData QoS, `/odom` depth 10 |
+| 0007 | `obstacle_detector_2` | P-3: `CircleObstacle.covariance` — D6's one sanctioned message change. **Invalidates every fixture bag carrying `Obstacles`** |
+| 0008 | `livox_ros_driver2` | declares its build-order dependency on `livox_sdk2_vendor`; only a sequential build exposes the omission |
+| 0009 | `obstacle_detector_2` | P-4: the `max_circle_radius` gate moved onto the fit (it used to test `fit + radius_enlargement`, so making the safety inflation larger made the sensor blinder), plus drop counters and throttled warnings |
 
-- **Init order is load-bearing (T10/R-3):** in any process that links both
-  stacks, rclcpp must initialize BEFORE `ChannelFactory::Init`, and the
-  factory must join with an EMPTY interface (`Init(domain, "")`). Both
-  rmw_cyclonedds and SDK2's ddscxx hard-fail when asked to create a domain
-  that already exists. The interface is pinned for both stacks via one
-  `CYCLONEDDS_URI`; the simulate ROS2 module derives it from config.yaml
-  (including `MaxAutoParticipantIndex=120` — cyclone's default ~10 exhausts
-  fast) when the env var is unset.
-- **Broken NVIDIA driver:** run simulate (and rviz2) with
-  `LIBGL_ALWAYS_SOFTWARE=1 __GLX_VENDOR_LIBRARY_NAME=mesa`.
-- **No joystick on this machine** and `use_joystick: 1` has no CLI override:
-  for testing, run simulate from a shadow directory with a
-  `use_joystick: 0` copy of config.yaml (never edit the tracked file).
-- The sidecar mirrors `/tmp/unitree_mujoco_mirror_model.xml` (override:
-  `UNITREE_MUJOCO_MIRROR_XML`), dumped by simulate at model load — never the
-  raw scene, which lacks the runtime-added obstacle mocap bodies.
-- **Live-path processes must export the lo-pinned `CYCLONEDDS_URI`** (Phase 2):
-  simulate derives it internally from config.yaml, so its topics live on `lo`
-  — any launch/CLI/probe started WITHOUT the same URI binds the default NIC
-  and sees the topic names via discovery but **no data**. Use:
-  `CYCLONEDDS_URI='<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="lo"/></Interfaces></General><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>'`
-  (Bag-replay-only sessions work without it because every endpoint then
-  shares the default interface.)
-- **SIGTERM on `ros2 launch` orphans composable containers** (Phase 2): the
-  stale `/perception_container` twin then races the next launch's LoadNode
-  RPC and the new container stays empty. Stop launches with SIGINT and/or
-  `pkill -f rclcpp_components/component_container` before relaunching in
-  scripts.
-- **Scripted commands + DPCBF modes (Phase 4):** with `use_joystick: 0` the
-  stock bridge wires NO joystick, so the 1 kHz `axis_filter`/`Filter()` seam
-  never runs. Env `UNITREE_MUJOCO_SCRIPTED_COMMANDS=<profile>` installs a
-  ScriptedJoystick (sim-time "t lx ly rx" breakpoints, e.g.
-  `test_fixtures/t1_baseline/t1_command_profile.txt`).
-  `UNITREE_DPCBF_MODE=oracle|shadow|estimated` selects the ObstacleSource
-  mode (default oracle, D5); `UNITREE_DPCBF_FILTER_LOG=<path>` captures every
-  Filter() call (T1/T6 instrument; analyze with
-  `test/phase4_capture_stats.py`). Adapter diagnostics: `/dpcbf/status`
-  10 Hz (mode, staleness, GetObstacles latency histogram, shadow deltas).
-  The adapter node deliberately runs `use_sim_time=false` — it must not
-  consume the /clock its own process publishes; all safety ages are sim-time
-  `d->time` vs sim-time header stamps.
-- **`pkill -f component_container` kills the shell that runs it** (Phase 5A):
-  the shell's own command line contains the pattern, so pkill matches itself
-  and the rest of the script never executes — it looks exactly like a silent
-  hang. Always bracket: `pkill -9 -f 'component_containe[r]'`. Same family as
-  the `unitree_mujoc[o]` trap below.
-- **Hardware source (Phase 5A):**
-  `ros2 launch g1_perception_bringup bringup.launch.py source:=hw` runs
-  `livox_ros_driver2` + DLIO and defaults `use_sim_time` to **false** (there is
-  no `/clock` on hardware). `source_hw.launch.py` takes `driver:=on|off`,
-  `lio:=dlio|off`, `map:=false|true`. Before launching anything on the robot,
-  run `ros2 run g1_perception_bringup hw_config_check.py` — it exits 2 while
-  `MID360_config.json` still carries the upstream placeholder IPs (Q-1).
-  **The driver does not exit when it cannot bind**: it logs `bind failed` /
-  `Init lds lidar fail!`, keeps running with no `/livox/*` topic created at
-  all, and ignores SIGINT/SIGTERM — `pkill -9 -f livox`. On the bench,
-  `test/hw_source_stub.py` replays a fixture bag in the driver's exact wire
-  format (7 fields, 26-byte packed stride, RELIABLE publisher, wall-clock
-  stamps) plus a synthetic IMU, which is what the two Phase-5A launch tests
-  drive.
-- **When killing a live simulate in scripts, match `unitree_mujoc[o]`** — the
-  process cmdline is `./unitree_mujoco`, so path-qualified pkill patterns
-  miss it and a stray 1 kHz sim keeps publishing (doubled /dpcbf/status and
-  /clock are the tell; cost one shadow session in Phase 4).
+## Building somewhere that is not this machine (`tools/`)
 
-## Gate tests (§16.2)
+The build command above is the *dev machine's*. It works here and nowhere else
+without help — five separate environment faults appeared the first time the
+workspace was built for another architecture, none of them in this code.
 
-| Gate | Where |
+| tool | for |
 |---|---|
-| T10 DDS coexistence | `install/t10_dds_coexistence/lib/t10_dds_coexistence/t10_smoke` |
-| T7 extrinsic guard | `colcon test --packages-select g1_description` (CTest `t7_extrinsic_guard`) |
-| T2 wall occlusion | `src/g1_perception/sim_mjlidar_bridge/test_gates/t2_wall_occlusion.py` |
-| T3 pattern envelope | `src/g1_perception/sim_mjlidar_bridge/test_gates/t3_pattern_envelope.py` |
-| Phase-2 measured wall (±2 cm) + T9 | CTest `test_wall_accuracy.launch_test.py` (self-contained; fixture: `test_fixtures/wall_scene/`) |
-| Phase-2 replay integration + T9 | CTest `test_projection_replay.launch_test.py` (needs the gitignored fixture bag) |
-| T4 static accuracy + extractor integration | CTest `test_detection_static.launch_test.py` (fixture: `test_fixtures/s1_surveyed`) |
-| T5 dynamic tracking (0.5 / 0.8 m/s) | CTest `test_tracking_dynamic_{05,08}.launch_test.py` (fixtures: `test_fixtures/s2_cross_*`) |
-| T8 replay determinism (HARD, P-2 landed) | CTest `t8_replay_determinism` (script `test/test_t8_replay_determinism.py`; fixture: `s1_surveyed`) |
-| T1 oracle equivalence (Phase 4, HARD) | simulate CTest `t1_oracle_equivalence` in `simulate/build_ros2` (`ctest -R t1`; fixture: `test_fixtures/t1_baseline/`) |
-| T7-hw extrinsic guard (Phase 5A) | `colcon test --packages-select g1_description` (CTest `t7_hw_extrinsic_guard`) — DLIO's extrinsics config re-derived from the xacro |
-| Hardware cloud contract + QoS wire-check (Phase 5A) | CTest `test_hw_source_contract.launch_test.py` (driver-format cloud through the unmodified perception stack) |
-| DLIO wiring smoke (Phase 5A) | CTest `test_dlio_wiring.launch_test.py` |
-| Mid360 bring-up preflight (Phase 5A) | CTest `hw_config_check` / `ros2 run g1_perception_bringup hw_config_check.py` |
-| T4-**hardware** (Phase 5B) | the SAME harness: `T4_BAG=<hw bag> T4_LAYOUT=<layout.yaml> T4_USE_SIM_TIME=false launch_test test/test_detection_static.launch_test.py` |
-| T6 staleness drill (Phase 4) | `test/phase4_live_session.sh estimated 90 <out> t6` + `test/phase4_capture_stats.py t6 <capture>` |
-| §9.6 containment calibration | `test/phase4_containment.py` on `phase4_obstacles_dump.py` replays |
-| §17.3 offline A/B (one command) | `test/phase4_ab_run.sh <out>` (needs fixtures + `simulate/build_ros2/ab_eval`) |
+| `tools/build_target.sh` | the on-target build (Orin, Pi, CI, container). Encodes all five fixes with the error each prevents, and ends with a triage list keyed by error message. `--check` does the preflight only |
+| `tools/diagnose_ament_export_libraries.py` | recognises an upstream `ament_cmake` bug that makes a package claim it cannot find **its own** library. Package-set dependent, so it hits fresh machines and never showed up here. **Diagnostic only** — no workaround has been shown correct |
+| `tools/arm64_emulate.sh` | an aarch64 rootfs under qemu-user **without root** — no cross toolchain, no `qemu-user-static` package, no binfmt registration, no sudo |
+
+Short version of the five, so a failure elsewhere is recognised rather than
+explored: VTK imported targets that exist only for `RelWithDebInfo`;
+`find_package(OpenSSL)` failing inside the ROS config chain while a bare
+`find_library(crypto)` succeeds in the same shell; PCL headers including Eigen
+unqualified; `livox_ros_driver2`'s undeclared dependency (patch 0008); and the
+ament `_lib` cache-shadow bug, which is characterised but **unsolved** — 10 of
+18 packages build on emulated aarch64 and that bug is what stops the rest.
+
+## Layout
+
+```
+ros2/
+├── deps.repos            pinned SHAs — never floating
+├── setup_external.sh     import + patch
+├── patches/              recorded patches; patches/pr/ = upstream-ready splits
+├── tools/                on-target build + diagnostics (see above)
+├── doc/                  operator_runbook.md, phase5b_checklists.md, phase5a_seam_audit.md
+├── evidence/             per-phase measured artefacts referenced from §21
+├── test_fixtures/        bag fixtures (gitignored) + their regeneration recipes
+└── src/g1_perception/    the packages; src/external/ is the vcs import target
+```

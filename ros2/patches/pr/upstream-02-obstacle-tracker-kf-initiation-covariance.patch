@@ -1,0 +1,31 @@
+diff --git a/include/obstacle_detector/utilities/tracked_circle_obstacle.h b/include/obstacle_detector/utilities/tracked_circle_obstacle.h
+index 06e20d9..9a4f28b 100644
+--- a/include/obstacle_detector/utilities/tracked_circle_obstacle.h
++++ b/include/obstacle_detector/utilities/tracked_circle_obstacle.h
+@@ -165,6 +165,26 @@ private:
+ 
+     kf_x_.q_est(1) = obstacle_.velocity.x;
+     kf_y_.q_est(1) = obstacle_.velocity.y;
++
++    // Two-point track initiation covariance (Bar-Shalom, "Estimation with
++    // Applications to Tracking and Navigation", §3.3.3): a track seeded from
++    // one measurement knows its position to R, and its velocity only to the
++    // difference of two measurements, 2R/T^2. Upstream leaves P = I, which
++    // matches neither the seed uncertainty nor the configured R: with the
++    // stock measurement_variance the filter starts BOTH far too confident in
++    // the seeded (differenced, hence noisy) velocity and inconsistent with
++    // its own R, so it discounts position innovations while that velocity
++    // converges. Symptom: a newly born track's centre lags the object for
++    // roughly the first second, which is exactly the window a safety
++    // consumer cares about.
++    if (s_sampling_time_ > 0.0) {
++      const double vel_var =
++          2.0 * s_measurement_variance_ / (s_sampling_time_ * s_sampling_time_);
++      for (KalmanFilter* kf : {&kf_x_, &kf_y_, &kf_r_}) {
++        kf->P(0, 0) = s_measurement_variance_;
++        kf->P(1, 1) = vel_var;
++      }
++    }
+   }
+ 
+   obstacle_detector::msg::CircleObstacle obstacle_;

@@ -103,6 +103,111 @@ TEST(Gating, SegmentsNotForwarded) {
   EXPECT_EQ(out.circles.size(), 1u);
 }
 
+// --- P-3 sigma term (fork patch 0007 publishes CircleObstacle.covariance) ---
+
+TEST(Gating, SigmaTermOffByDefault) {
+  sof::Params p;
+  ASSERT_FALSE(p.use_covariance);  // shipped behaviour
+  auto c = Circle(0, 0, 0.25, 0, 0);
+  c.covariance = {0.04, 0.01, 0.0025};  // sigma = sqrt(0.04+0.0025) ≈ 0.2062
+  auto out = sof::Apply(Msg(0.0, {c}), p, 0.0);
+  ASSERT_EQ(out.circles.size(), 1u);
+  EXPECT_NEAR(out.circles[0].radius, 0.28, 1e-12);  // 0.25 + 0.03, no sigma
+}
+
+TEST(Gating, SigmaTermWhenEnabled) {
+  sof::Params p;
+  p.use_covariance = true;
+  p.k_sigma = 2.0;
+  auto c = Circle(0, 0, 0.25, 0, 0);
+  c.covariance = {0.04, 0.01, 0.0025};
+  const double sigma = std::sqrt(0.04 + 0.0025);  // max(var_x,var_y) + var_r
+  auto out = sof::Apply(Msg(0.0, {c}), p, 0.0);
+  ASSERT_EQ(out.circles.size(), 1u);
+  EXPECT_NEAR(out.circles[0].radius, 0.25 + 0.03 + 2.0 * sigma, 1e-12);
+}
+
+TEST(Gating, SigmaSelfDisablesOnNonTrackerProducers) {
+  // The oracle source and every hand-built message leave covariance zero;
+  // enabling the term must then be a no-op, not a mis-fire.
+  sof::Params p;
+  p.use_covariance = true;
+  auto out = sof::Apply(Msg(0.0, {Circle(0, 0, 0.25, 0, 0)}), p, 0.0);
+  ASSERT_EQ(out.circles.size(), 1u);
+  EXPECT_NEAR(out.circles[0].radius, 0.28, 1e-12);
+}
+
+TEST(Gating, SigmaIsCapped) {
+  // A diverged track must not inflate without bound.
+  sof::Params p;
+  p.use_covariance = true;
+  p.k_sigma = 1.0;
+  p.sigma_max = 0.10;
+  auto c = Circle(0, 0, 0.25, 0, 0);
+  c.covariance = {100.0, 100.0, 100.0};
+  auto out = sof::Apply(Msg(0.0, {c}), p, 0.0);
+  ASSERT_EQ(out.circles.size(), 1u);
+  EXPECT_NEAR(out.circles[0].radius, 0.25 + 0.03 + 0.10, 1e-12);
+}
+
+// --- Observability of the silent paths (gaps G1/G2) -------------------------
+
+TEST(Stats, LargeRadiusDropIsCounted) {
+  // The whole G2 lesson: a drop nobody can observe is the defect, wherever
+  // the threshold sits. Apply() must be able to say what it threw away.
+  sof::Params p;
+  sof::Stats s;
+  auto out = sof::Apply(
+      Msg(0.0, {Circle(0, 0, 0.25, 0, 0), Circle(2, 0, 0.90, 0, 0, 2)}), p,
+      0.0, &s);
+  EXPECT_EQ(out.circles.size(), 1u);
+  EXPECT_EQ(s.dropped_large_radius, 1);
+  EXPECT_NEAR(s.radius_max_dropped, 0.90, 1e-12);
+  EXPECT_EQ(s.stale_messages, 0);
+}
+
+TEST(Stats, StaleMessageIsCounted) {
+  sof::Params p;
+  sof::Stats s;
+  auto out = sof::Apply(Msg(0.0, {Circle(0, 0, 0.25, 0, 0)}), p, 1.0, &s);
+  EXPECT_TRUE(out.circles.empty());
+  EXPECT_EQ(s.stale_messages, 1);
+}
+
+TEST(Stats, ImplausibleSigmaIsFlaggedSeparatelyFromTheCap) {
+  // sqrt(P(0,0)) is metres by construction; a half-metre sigma means the
+  // tracker's measurement_variance (m^2) was never set from data (gap G1).
+  // That must be distinguishable from a legitimately capped diverged track,
+  // because the remedies are opposite: fix R, versus trust the cap.
+  sof::Params p;
+  p.use_covariance = true;
+  p.sigma_max = 0.50;
+  sof::Stats s;
+  auto c = Circle(0, 0, 0.25, 0, 0);
+  c.covariance = {0.34, 0.34, 0.0};  // sigma ≈ 0.583 m — the measured value
+  sof::Apply(Msg(0.0, {c}), p, 0.0, &s);
+  EXPECT_EQ(s.sigma_implausible, 1);
+  EXPECT_EQ(s.sigma_clamped, 1);
+  EXPECT_GT(s.sigma_max_seen, sof::kSigmaPlausibleMax);
+
+  // A plausible sigma trips neither counter.
+  sof::Stats s2;
+  auto c2 = Circle(0, 0, 0.25, 0, 0);
+  c2.covariance = {1.0e-4, 1.0e-4, 1.0e-4};  // sigma ≈ 14 mm
+  sof::Apply(Msg(0.0, {c2}), p, 0.0, &s2);
+  EXPECT_EQ(s2.sigma_implausible, 0);
+  EXPECT_EQ(s2.sigma_clamped, 0);
+}
+
+TEST(Stats, NullStatsIsAllowedAndBehaviourIsIdentical) {
+  sof::Params p;
+  sof::Stats s;
+  auto a = sof::Apply(Msg(0.0, {Circle(0, 0, 0.25, 0.5, 0)}), p, 0.0);
+  auto b = sof::Apply(Msg(0.0, {Circle(0, 0, 0.25, 0.5, 0)}), p, 0.0, &s);
+  ASSERT_EQ(a.circles.size(), b.circles.size());
+  EXPECT_DOUBLE_EQ(a.circles[0].radius, b.circles[0].radius);
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

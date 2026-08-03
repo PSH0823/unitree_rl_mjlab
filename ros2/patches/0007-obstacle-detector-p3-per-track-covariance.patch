@@ -1,0 +1,30 @@
+diff --git a/msg/CircleObstacle.msg b/msg/CircleObstacle.msg
+index d6df499..88417dc 100644
+--- a/msg/CircleObstacle.msg
++++ b/msg/CircleObstacle.msg
+@@ -5,3 +5,7 @@ float64 radius                  # Radius with added margin [m]
+ float64 true_radius             # True measured radius [m]
+ string semclass                  # Semantic class
+ float64 confidence              # Confidence in semantic class
++float64[3] covariance           # [var_x, var_y, var_r] m^2 — diagonal of the
++                                # tracker's posterior estimate-error covariance
++                                # (P(0,0) of the per-axis KFs). All zero when
++                                # the producer is not the tracker.
+diff --git a/src/obstacle_tracker.cpp b/src/obstacle_tracker.cpp
+index 16bce31..44e8752 100644
+--- a/src/obstacle_tracker.cpp
++++ b/src/obstacle_tracker.cpp
+@@ -730,6 +730,13 @@ void ObstacleTracker::publishObstacles() {
+   for (auto& tracked_circle_obstacle : tracked_circle_obstacles_) {
+     obstacle_detector::msg::CircleObstacle ob = tracked_circle_obstacle.getObstacle();
+     ob.true_radius = ob.radius - radius_margin_;
++    // P-3: export the per-track posterior estimate-error variances. Only
++    // meaningful because P-2 initialises P from R (diag(R, 2R/dt^2)) instead of
++    // upstream's P = I; before that these numbers were an arbitrary unit.
++    // Consumed by safety_obstacle_filter's k_sigma inflation term (§9.6, H-8).
++    ob.covariance[0] = tracked_circle_obstacle.getKFx().P(0, 0);
++    ob.covariance[1] = tracked_circle_obstacle.getKFy().P(0, 0);
++    ob.covariance[2] = tracked_circle_obstacle.getKFr().P(0, 0);
+     // Compensate robot velocity from obstacle velocity
+     // Velocities are in robot's frame, x forward y leftwards
+     if (p_compensate_robot_velocity_)

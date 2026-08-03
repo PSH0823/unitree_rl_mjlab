@@ -11,6 +11,17 @@ obstacle_extractor:
     max_split_distance: 0.20
     max_merge_separation: 0.20
     max_merge_spread: 0.20
+    # SENSING LIMIT, stated in metres of TRUE radius (workstream C gap G2).
+    # Upstream compared `fit + radius_enlargement` against this value, so the
+    # shipped 0.60/0.17 really cut at a 0.43 m FIT and — with the measured
+    # +8.4%*r fit bias on a fully visible cylinder — at ~0.397 m of true
+    # radius, silently and intermittently. Fork patch 0009 moves the gate onto
+    # the fit, so this parameter now bounds the estimated obstacle radius as
+    # §9.6 always claimed. Effective limit: true radius < 0.60/1.084 ~= 0.55 m
+    # fully visible (a partly occluded object fits smaller and stays visible
+    # LONGER, so this is the conservative end of the range). Objects above it
+    # — wide pillars, pallet stacks, vehicles — are outside this pipeline's
+    # circle model by design; every drop is now counted and logged.
     max_circle_radius: 0.60
     radius_enlargement: 0.17          # re-tuned from 0.25 (short-arc bias, H-7)
     circles_from_visibles: true
@@ -32,5 +43,20 @@ obstacle_tracker:
     std_correspondence_dev: 0.15
     process_variance: 0.0001
     process_rate_variance: 0.03
+    # UNIT: m^2. This is R(0,0) of the tracker's Kalman filter, whose C = [1 0]
+    # and whose measurement is a circle centre in METRES — so sqrt(P(0,0)),
+    # the sigma safety_obstacle_filter can inflate by, is metres too. The maths
+    # was never unitless (gap G1 corrected the interim block's diagnosis).
+    # THE VALUE IS WRONG AND INHERITED: 1.0 asserts a ONE-METRE 1-sigma LiDAR
+    # measurement. P-2 seeds P(0,0) = R, so every track is born at sigma = 1.0 m
+    # and relaxes to ~0.58 m, and any k_sigma fitted against that silently
+    # absorbs the error. Measured on s1_surveyed the real scatter is
+    # 1.775e-06 m^2 (1 sigma = 1.3 mm) — but that is a noiseless analytic
+    # raycast, so it is not a shipping value either. Derive R from HARDWARE
+    # (5B block 1) with test/measure_measurement_variance.py before anyone
+    # calibrates k_sigma; changing it re-tunes the tracker, so re-verify T5 and
+    # the S1/S2 containment afterwards. Tripwires meanwhile:
+    # calibrate_k_sigma.py refuses above sigma p50 0.25 m, and the safety
+    # filter counts sigma_implausible separately from sigma_clamped.
     measurement_variance: 1.0
     frame_id: odom

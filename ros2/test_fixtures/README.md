@@ -1,15 +1,30 @@
 # Test fixtures
 
 Bags are gitignored (size); regenerate with the recipe below and verify
-against the recorded hash in the §21 log entry that references them.
+against the hash recorded here.
+
+**Any change to `obstacle_detector/msg/Obstacles` invalidates every bag that
+carries it** (all six below record `/sim/gt_obstacles`). Patch 0007 did exactly
+that; five bags were regenerated in the interim block and their hashes are
+updated here. `s1_static_reference` was the sixth and was missed —
+**regenerated 2026-08-02 in the runbook block; all six are now post-0007.**
+[Checked 2026-08-02.]
 
 ## s1_static_reference (Phase 1, 2026-08-01)
 
 S1-style scene: robot suspended by the elastic band (sensor ≈1.84 m), 90 GT
-obstacles moving. sqlite3 (MCAP blocked on apt/sudo — see log).
-27.87 s, 92.9 MiB, md5(db3) `d372a619c563e0b4953247dafdfc51a0`.
+obstacles moving. sqlite3.
+**Regenerated 2026-08-02 (post-patch-0007): 28.89 s, 98.1 MiB, 289 clouds,
+md5(db3) `3466e2cf54b1f3374497796c33fbcbbb`** (the pre-0007 bag was
+27.87 s / 92.9 MiB / `d372a619c563e0b4953247dafdfc51a0`).
+Verified after regeneration: `test_projection_replay` gives 289 `/scan`
+frames over 28.8 s sim time → 10.00 Hz, 0.0 % drop, T9 288/0 misses.
 
-Regenerate (simulator with ROS2 module + bringup running):
+Regenerate (shadow run-tree simulator with the ROS2 module + description +
+sidecar running — NOT the perception container, which is what replays it;
+see `doc/operator_runbook.md` §3.2 and §9.1). Record ~29 s of wall clock at
+realtime factor ≈1; with the container also running the factor drops to ≈0.44
+and the same wall time yields half the bag:
 
 ```bash
 ros2 bag record -o s1_static_reference /livox/lidar /odom /tf /tf_static \
@@ -29,15 +44,17 @@ The trajectories are driven at record time by
 
 T4 fixture: 3 surveyed cylinders (r=0.15, faces at exactly 1/2/3 m,
 bearings 45°/135°/−45°), grounded standing pose, static, 30 s. GT in-bag.
-sqlite3, 75 MiB, md5(db3) `64abe6da6688bd8b8a9b480294e6cb07`.
+sqlite3, 75 MiB, md5(db3) `889d4c34872652c9b5fa9d92ec4b5c15`
+(regenerated post-patch-0007; the pre-0007 bag was `64abe6da…`).
 
 ## s2_cross_05 / s2_cross_08 (Phase 3, 2026-08-01)
 
 T5 fixtures: single cylinder crossing on x=2.0 from y=−4.9 to +4.9 at 0.5
 resp. 0.8 m/s — start/end OUTSIDE range_max so the track is born on a
 moving object (the T5 "crossing" reading). GT (position + commanded
-velocity) in-bag. sqlite3; 53 MiB md5 `72b811a9f1c5211986fd50eaec098bb4`
-(0.5); 35 MiB md5 `352f72adce964ffa2b84301e802ebd74` (0.8).
+velocity) in-bag. sqlite3; 53 MiB md5 `3fde31e71d5b1124aa8a74fea9456850`
+(0.5); 36 MiB md5 `3174aa0bf76d12dc41b7c0cdecbc6309` (0.8).
+(regenerated post-patch-0007; pre-0007 were `72b811a9…` / `352f72ad…`.)
 
 Regenerate all three (workspace built & sourced):
 
@@ -60,8 +77,9 @@ Regenerate all three (workspace built & sourced):
 (straddles the min_radius 0.20 clamp), box-reflect motion at 0.2–0.8 m/s in
 x∈[0.8,7], y∈[−4,4] — the DynamicObstacleManager motion model in scripted
 form. Mirror: `scenario_mirror_p4.xml` (nmocap=25 — the S1/S2 mirror stays
-untouched because those bags pin nmocap=4). 33 s, 87.5 MiB, md5(db3)
-`5f0e98e3b943df8de555dab05caff8c0`.
+untouched because those bags pin nmocap=4). 33 s, 87 MiB, md5(db3)
+`4282942ccc6e471761d73ebfd5c7d13d` (regenerated post-patch-0007; pre-0007
+`5f0e98e3…`).
 
 ## s4_occlusion (Phase 4, 2026-08-01)
 
@@ -69,8 +87,9 @@ untouched because those bags pin nmocap=4). 33 s, 87.5 MiB, md5(db3)
 INSIDE p_max (first cut used x=3.2; DPCBF culls at 3.0 m, so occlusion
 containment there had no safety meaning). Shadow occludes the crosser
 ~1.8 s > tracking_duration 1.0 s: the track dies mid-shadow and re-acquires
-on emergence (the §10.3 worst case, on purpose). 21.4 s, 51.5 MiB, md5(db3)
-`83b2311fa4581789b3c88cb4f13ef383`.
+on emergence (the §10.3 worst case, on purpose). 21.4 s, 49 MiB, md5(db3)
+`8851168594c5018dbb865e46401e1490` (regenerated post-patch-0007; pre-0007
+`83b2311f…`).
 
 Regenerate S3/S4: same recipe as above with
 `mirror_model_path:=/tmp/scenarios_phase3/scenario_mirror_p4.xml` and the

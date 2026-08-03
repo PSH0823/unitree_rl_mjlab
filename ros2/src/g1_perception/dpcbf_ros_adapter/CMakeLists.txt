@@ -50,6 +50,12 @@ if(BUILD_TESTING)
   ament_add_gtest(test_obstacle_source test/test_obstacle_source.cpp
                   TIMEOUT 120)
   target_link_libraries(test_obstacle_source dpcbf_ros_adapter)
+  # Header-only overlay geometry (§4.6). The authoritative gate is
+  # `boundary_check math` against the frozen library, which needs a capture
+  # fixture; these run anywhere.
+  ament_add_gtest(test_dpcbf_boundary test/test_dpcbf_boundary.cpp)
+  target_include_directories(test_dpcbf_boundary PRIVATE
+                             include ${DPCBF_INCLUDE_DIR})
 endif()
 
 ament_package()

@@ -22,9 +22,11 @@ mkdir -p "$OUT"
 [ -x "$AB_EVAL" ] || { echo "ab_eval missing: $AB_EVAL"; exit 77; }
 /usr/bin/python3 "$WS/test_fixtures/scenarios/make_scenario_scene.py" --out $SCEN
 
+# NOTE: pkill returns 1 when nothing matched, which under `set -e` aborted the
+# whole run on a machine with no stale container — i.e. every clean checkout.
 replay() {  # bag out_jsonl secs
-  pkill -INT -f 'rclcpp_components/component_containe[r]' 2>/dev/null; sleep 1
-  pkill -KILL -f 'rclcpp_components/component_containe[r]' 2>/dev/null; sleep 1
+  pkill -INT -f 'rclcpp_components/component_containe[r]' 2>/dev/null || true; sleep 1
+  pkill -KILL -f 'rclcpp_components/component_containe[r]' 2>/dev/null || true; sleep 1
   /usr/bin/python3 "$HERE/phase4_obstacles_dump.py" "$3" "$2" &
   local probe=$!
   ros2 launch g1_perception_bringup perception.launch.py use_sim_time:=true \
@@ -34,8 +36,8 @@ replay() {  # bag out_jsonl secs
   ros2 bag play "$1" > /dev/null 2>&1
   wait $probe
   kill -INT $perc 2>/dev/null; sleep 2
-  pkill -INT -f 'rclcpp_components/component_containe[r]' 2>/dev/null; sleep 1
-  pkill -KILL -f 'rclcpp_components/component_containe[r]' 2>/dev/null
+  pkill -INT -f 'rclcpp_components/component_containe[r]' 2>/dev/null || true; sleep 1
+  pkill -KILL -f 'rclcpp_components/component_containe[r]' 2>/dev/null || true
 }
 
 declare -A SECS=( [s1_static]=45 [s2_cross_05]=38 [s2_cross_08]=28

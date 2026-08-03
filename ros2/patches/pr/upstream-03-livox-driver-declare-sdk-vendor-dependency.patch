@@ -1,0 +1,19 @@
+diff --git a/package.xml b/package.xml
+index 96f5762..f498230 100644
+--- a/package.xml
++++ b/package.xml
+@@ -11,6 +11,14 @@
+   <build_depend>rosidl_default_generators</build_depend>
+   <member_of_group>rosidl_interface_packages</member_of_group>
+ 
++  <!-- Build-order dependency on the vendor package that installs
++       liblivox_lidar_sdk_shared.so into the merged prefix. Without it colcon
++       is free to schedule this package first, and CMakeLists.txt:249's
++       find_library(LIVOX_LIDAR_SDK_LIBRARY) then fails with "Could not find
++       ... liblivox_lidar_sdk_shared.so". The dev machine's parallel build
++       happened to order it correctly and hid this for a whole phase; a
++       sequential build on another machine does not. -->
++  <depend>livox_sdk2_vendor</depend>
+   <depend>rclcpp</depend>
+   <depend>rclcpp_components</depend>
+   <depend>std_msgs</depend>

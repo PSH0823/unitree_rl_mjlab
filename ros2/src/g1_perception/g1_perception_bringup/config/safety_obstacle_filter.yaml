@@ -12,8 +12,36 @@ safety_obstacle_filter:
   ros__parameters:
     max_age: 0.30              # s
     min_radius: 0.20           # m
-    max_circle_radius: 0.60    # m (spurious wall arcs)
+    # m. Guards against a producer that is NOT the patched extractor (a
+    # hardware source, a replayed bag, or a tracked radius the KF has let
+    # drift): with fork patch 0009 the extractor itself can never emit a
+    # true_radius >= its own max_circle_radius, so on the normal sim path this
+    # gate is a redundant restatement of the same bound rather than a second,
+    # independent one. Keep the two values equal — §9.6's sensing limit is a
+    # single number and splitting it across two files is how G2 happened.
+    max_circle_radius: 0.60
     fixed_inflation: 0.051     # m (Phase-4 calibrated; was Appendix-A 0.03)
     latency_horizon: 0.12      # s
     v_max_obstacle: 1.5        # m/s
-    k_sigma: 2.748             # active only with P-3 covariance export
+    # --- P-3 sigma term (wired, DEFAULT OFF) --------------------------------
+    # The tracker now publishes CircleObstacle.covariance (fork patch 0007), so
+    # this path is live code rather than a reserved parameter. It ships
+    # disabled: 2.748 is the ABANDONED BRANCH's k_sigma and is a placeholder
+    # until 5B captures per-track residuals against surveyed props. Enabling it
+    # is a joint recalibration of (fixed_inflation, k_sigma) — the fixed term
+    # already covers the steady-state circle-fit bias that sigma would
+    # double-count. Harness: g1_perception_bringup/test/calibrate_k_sigma.py.
+    # MEASURED (evidence/interim/p3_sigma_path.md, CORRECTED by gap G1 in
+    # evidence/interim/g1_sigma_units.md): the covariance IS in m^2 and sigma
+    # IS in metres — the earlier "unitless knob" reading was wrong. What is
+    # wrong is the VALUE of obstacle_detector.yaml's `measurement_variance: 1.0`,
+    # which asserts a one-metre 1-sigma measurement, so sigma comes out ~0.58 m
+    # and k_sigma silently absorbs the error. Setting R from the Mid-360's real
+    # range noise (5B block 1) comes BEFORE calibrating k_sigma; sigma will then
+    # fall by orders of magnitude and k_sigma must rise by the same factor.
+    # With the term on at the WRONG sigma, sim coverage goes 92.5% -> 99.9%
+    # pooled and S3 85.2% -> 99.9%: the shape of the remedy is right, the
+    # magnitude is uncalibrated.
+    use_covariance: false
+    k_sigma: 2.748             # placeholder, NOT calibrated on this branch
+    sigma_max: 0.50            # m, cap on a diverged track's inflation

@@ -1,0 +1,105 @@
+P-4 (§9.6): gate circles on the FITTED radius and make both max_circle_radius
+drop paths observable.
+
+`detectCircles()` adds `radius_enlargement` to the fitted radius BEFORE
+testing it against `max_circle_radius`, so the parameter's real meaning is
+"max radius minus radius_enlargement" and increasing the conservative safety
+inflation silently shrinks the largest obstacle the pipeline can report.
+With the shipped 0.60 / 0.17 the effective cut is a 0.43 m fitted radius;
+measured against 210 analytic-ray configurations the fit over-estimates a
+fully visible cylinder by +8.4% of its radius, so a real cylinder vanishes at
+~0.397 m of TRUE radius. Verified: the rule "keep iff fit + 0.17 < 0.60"
+reproduces all 17 non-detections in that sweep and every one of the 43
+detections, with no exceptions.
+
+Worse than the threshold being wrong is that it was silent, and
+intermittent: truncating the visible arc shortens the chord, shrinks the fit
+and brings the same obstacle back under the cut, so a pillar or a crate
+appears and disappears as the robot moves past it. Nothing downstream can
+compensate for a constraint that was never generated.
+
+This patch (a) moves the enlargement to after the gate, so
+`max_circle_radius` bounds the estimated obstacle radius as documented and
+the effective true-radius limit becomes 0.60/1.084 ~= 0.553 m, and (b) counts
+and throttle-logs both drop paths. The merge refusal in `mergeCircles()` is
+left arithmetically untouched — its quantity is a deliberate over-bound, not
+a fit — and only made visible.
+
+Downstream is unchanged: `circle.radius` still carries the enlargement when
+it is pushed, so `mergeCircles()` and `true_radius = radius - enlargement`
+behave exactly as before for every circle that was already being kept.
+
+--- a/include/obstacle_detector/obstacle_extractor.h
++++ b/include/obstacle_detector/obstacle_extractor.h
+@@ -147,6 +147,11 @@
+ 
+   std::string p_frame_id_;
+   std::string published_obstacles_frame_id_ = "";
++
++  // P-4: counters behind the two `max_circle_radius` drop paths. A silent
++  // drop is the defect regardless of where the threshold sits.
++  long dropped_large_circles_ = 0;
++  long refused_large_merges_ = 0;
+ };
+ 
+ } // namespace obstacle_detector
+--- a/src/obstacle_extractor.cpp
++++ b/src/obstacle_extractor.cpp
+@@ -401,15 +401,38 @@
+     }
+ 
+     Circle circle(*segment);
+-    circle.radius += p_radius_enlargement_;
+ 
++    // P-4: gate on the FITTED radius, not on the fitted radius plus the
++    // safety enlargement.
++    //
++    // Upstream adds `radius_enlargement` first and then tests against
++    // `max_circle_radius`, so the parameter really means "max radius MINUS
++    // radius_enlargement" and making the inflation more conservative
++    // silently SHRINKS the largest obstacle the sensor can report. With the
++    // shipped 0.60 / 0.17 the real cut is a 0.43 m fitted radius; the fit
++    // over-estimates a fully visible cylinder by ~8.4% of its radius, so a
++    // real cylinder disappears at ~0.397 m of true radius — with no
++    // diagnostic anywhere, and intermittently, because partial occlusion
++    // shortens the chord and brings the fit back under the cut.
+     if (circle.radius < p_max_circle_radius_) {
++      circle.radius += p_radius_enlargement_;
+       circles_.push_back(circle);
+ 
+       if (p_discard_converted_segments_) {
+         segment = segments_.erase(segment);
+         --segment;
+       }
++    } else {
++      // A dropped obstacle is invisible to everything downstream and nothing
++      // downstream can compensate for a constraint that was never generated.
++      // Whatever the threshold is set to, the drop must be observable.
++      ++dropped_large_circles_;
++      RCLCPP_WARN_THROTTLE(
++          nh_->get_logger(), *nh_->get_clock(), 2000,
++          "obstacle_extractor: dropped a circle of fitted radius %.3f m "
++          "(max_circle_radius %.3f m) — an obstacle this large is INVISIBLE "
++          "downstream; %ld dropped since start",
++          circle.radius, p_max_circle_radius_, dropped_large_circles_);
+     }
+   }
+ }
+@@ -460,6 +483,17 @@
+       merged_circle = circle;
+       return true;
+     }
++    // P-4 observability: this is the SECOND silent drop path, and its
++    // quantity is different again — a deliberate over-bound (span plus the
++    // larger parent radius), not a fit. It is left arithmetically untouched;
++    // only made visible. Note the two circles survive unmerged when this
++    // fires, so it is a merge refusal, not necessarily a lost obstacle.
++    ++refused_large_merges_;
++    RCLCPP_WARN_THROTTLE(
++        nh_->get_logger(), *nh_->get_clock(), 5000,
++        "obstacle_extractor: refused a merge of over-bound radius %.3f m "
++        "(max_circle_radius %.3f m); %ld refused since start",
++        circle.radius, p_max_circle_radius_, refused_large_merges_);
+   }
+ 
+   return false;

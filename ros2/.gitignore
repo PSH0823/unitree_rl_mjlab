@@ -23,3 +23,12 @@ test_fixtures/hw/*/*
 !test_fixtures/t1_baseline/
 test_fixtures/t1_baseline/*.bin
 __pycache__/
+
+# evidence/: raw per-node logs and per-run trace/metrics dumps are
+# regenerable and aren't referenced by filename in any doc; curated
+# summaries (.md/.csv/.png/.txt named in the checklists/README) stay tracked.
+evidence/**/*.log
+evidence/**/*.jsonl
+evidence/**/*.json
+!evidence/phase5b/selfhit.json
+*.txt

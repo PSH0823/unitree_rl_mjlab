@@ -93,11 +93,37 @@ if(UNITREE_MUJOCO_WITH_ROS2)
   add_executable(ab_eval ${DPCBF_ROS_ADAPTER_DIR}/tools/ab_eval.cc)
   target_link_libraries(ab_eval PRIVATE
     dpcbf_safety_filter dpcbf_ros_adapter::dpcbf_ros_adapter)
+
+  # Validation gate for the overlay's recomputed constraint geometry (§4.6).
+  # Same arrangement and for the same reason as t1_replay: it needs the frozen
+  # dpcbf library as its ORACLE, so it builds here while its source lives in
+  # the adapter package.
+  add_executable(boundary_check ${DPCBF_ROS_ADAPTER_DIR}/tools/boundary_check.cc)
+  target_link_libraries(boundary_check PRIVATE
+    dpcbf_safety_filter dpcbf_ros_adapter::dpcbf_ros_adapter yaml-cpp)
+
+  # Workstream B instrument: replays the FSM's own wireless_remote decode and
+  # its own compiled transition DSL against a live rt/lowstate, so a scripted
+  # chord that never arrives is distinguishable from one the FSM rejected.
+  # deploy/ is READ here (its DSL header), never modified.
+  add_executable(fsm_button_probe
+                 ${DPCBF_ROS_ADAPTER_DIR}/tools/fsm_button_probe.cc)
+  target_include_directories(fsm_button_probe PRIVATE
+                             ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/include)
+  target_link_libraries(fsm_button_probe PRIVATE unitree_sdk2 yaml-cpp)
   add_test(NAME t1_oracle_equivalence
            COMMAND t1_replay
              ${CMAKE_CURRENT_SOURCE_DIR}/../ros2/test_fixtures/t1_baseline/t1_baseline_capture.bin
              ${CMAKE_CURRENT_SOURCE_DIR}/../dpcbf/config/dpcbf_config.yaml)
   set_tests_properties(t1_oracle_equivalence PROPERTIES SKIP_RETURN_CODE 77)
+  # The overlay's recomputation vs the frozen filter's own selected_obstacles,
+  # on the same capture T1 uses. Stride 1: every recorded tick is checked.
+  add_test(NAME dpcbf_boundary_recomputation
+           COMMAND boundary_check math
+             ${CMAKE_CURRENT_SOURCE_DIR}/../ros2/test_fixtures/t1_baseline/t1_baseline_capture.bin
+             ${CMAKE_CURRENT_SOURCE_DIR}/../dpcbf/config/dpcbf_config.yaml)
+  set_tests_properties(dpcbf_boundary_recomputation PROPERTIES
+                       SKIP_RETURN_CODE 77 TIMEOUT 900)
 endif()
 
 add_executable(jstest src/joystick/jstest.cc src/joystick/joystick.cc)

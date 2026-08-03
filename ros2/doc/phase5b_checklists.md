@@ -21,9 +21,10 @@ and recorded, and `hw_config_check.py` exits 0 (not 2).
 |---|---|
 | **Q-1 answers written down verbatim** — G1 variant; onboard PC (EDU Orin NX or other); is the Mid360 the factory head mount (H-1)?; does the onboard PC have sudo/apt and internet?; Ubuntu/ROS as shipped; how the dev machine reaches it (link, IPs) | §12 was written from vendor docs; nothing in it is verified |
 | **Topology decision recorded**: perception on the Orin, or driver-on-robot + perception-on-dev-machine over ethernet | Decides whether the CPU-budget gate means anything this session (§17.4). If perception runs off-robot, the Orin benchmark becomes a **named follow-up**, not a silently skipped gate |
-| Workspace built on whatever will run it (see 5A gate; aarch64 build is the open risk) | |
+| Workspace built on whatever will run it — run **`ros2/tools/build_target.sh --check`** first, then without `--check` | The interim block built the workspace on emulated aarch64 and got **10 of 18 packages**; the script encodes every failure it hit and ends with a triage list keyed by error message. Assume the build is NOT a formality: allow a slot for it before the robot is powered, and note that installing the apt dependencies needs root on the target |
+| Read **`ros2/tools/diagnose_ament_export_libraries.py`** before the session | A from-scratch build can die claiming a package cannot find its OWN library. It is an upstream ament bug, package-set dependent, and **unsolved** — the file explains how to recognise it and what to try (sequential executor; then that package alone with `--packages-select`). Budget for it; do not discover it on robot time |
 | `CYCLONEDDS_URI` prepared naming the **robot's** NIC, not `lo` (§12.2) | Phase-2 trap: wrong interface ⇒ topic names visible, no data |
-| Props: **≥3 cylinders, at least one r ≥ 0.30 m** | Phase 4 measured a centre/radius bias that *grows with radius* (83 mm centre, +33 mm radius at r=0.30 vs ≤41 mm at r=0.15). Without a big prop, block 5 cannot test the finding |
+| Props: **≥3 cylinders, at least one r ≥ 0.30 m; keep every prop at r ≤ 0.52 m** | The interim sweep pinned the bias: centre error `−0.278·r`, radius error `+0.084·r`, both range-independent (evidence/interim/circle_fit_bias.md). It also found a hard cut, whose mechanism is now confirmed (gap G2): the extractor tested `fit + radius_enlargement(0.17) < max_circle_radius(0.60)`, i.e. a 0.43 m fit, i.e. **r < 0.397 m of true radius** — silently, and intermittently, because occlusion shortens the chord and brings the same prop back under the cut. **Fork patch 0009 fixes this**: the gate is on the fit, so the limit is now `0.60/1.084 ≈ 0.55 m` of true radius, and every drop is counted and throttle-logged by both the extractor and `safety_obstacle_filter`. **The r ≈ 0.32 m upper bound in the previous revision of this checklist is WITHDRAWN.** **REFINED 2026-08-02 (runbook block, `evidence/runbook/circle_fit_limit_by_range.csv`): the limit is RANGE-DEPENDENT and 0.55 m is only true at 2 m.** Re-measured on the same harness at full arc: r = 0.55 m detects at d = 2 m (fit 0.5796, just under the 0.60 gate) but is **dropped at d = 3 m and d = 4 m**; r = 0.52 m detects at 2, 3 and 4 m (fit 0.5624 / 0.5699). The chord — hence the fit — grows with range, so the same prop passes the gate close in and fails it further out, which is the same intermittency G2 described, in the range axis rather than the occlusion axis. Props are surveyed at 1–3 m, so **use r ≤ 0.52 m** and treat 0.55 m as the close-range-only figure. Keep `max_circle_radius` equal in `obstacle_detector.yaml` and `safety_obstacle_filter.yaml`; if a prop above that is ever wanted, raise both and say so in the session log |
 | Tape measure, chalk/tape for floor marks, a flat wall segment ≥2 m wide | Blocks 2 and 5 are surveys |
 | Disk: ≥20 GB free where bags are written | Raw 10 Hz clouds ≈ 3 MB/s (sim bags: 93 MB / 28 s) |
 | `df -h`, `date`, `git rev-parse HEAD` captured into the session log | Bag provenance |
@@ -81,6 +82,41 @@ ros2 topic echo --once /livox/imu   --field header
 
 **Bag:** `b1_raw_driver` — the first artefact of the session and the input to
 Q-3 and Q-8 if nothing else works.
+
+**Also derived from this bag, offline — the measurement variance for P-3.**
+`measurement_variance` is `R(0,0)` and its unit is **m²** — the tracker's KF
+has `C = [1 0]` and its measurement is a circle centre in metres, so σ was
+always metres. What is wrong is the VALUE: the inherited `1.0` asserts a
+**one-metre 1σ** measurement, P-2 seeds `P(0,0) = R` from it, and that is why
+sim σ reads 583 mm and why `k_σ` silently absorbs the scale (gap G1; the
+earlier "σ is not in metres" reading is corrected in the §21 entry). A
+variance of 1.0 m² is a perfectly well-typed number, so nothing downstream
+could ever have noticed — which is why there is now a tripwire in
+`calibrate_k_sigma.py` (it REFUSES to emit a k_σ when σ p50 > 0.25 m) and a
+throttled warning in `safety_obstacle_filter`.
+
+Two ways to get the real number, in preference order:
+
+1. **From the detector's own scatter (preferred — it is what R actually
+   models).** `phase4_obstacles_dump.py` now records `/raw_obstacles`, the
+   KF's actual measurements. On a static surveyed scene:
+   ```bash
+   /usr/bin/python3 test/measure_measurement_variance.py hw_b5.jsonl
+   ```
+   It clusters detections per physical target and reports the scatter about
+   each target's mean, so the systematic circle-fit bias (which
+   `fixed_inflation` already covers, and which must NOT be double-counted
+   here) is absorbed by the mean.
+2. **From raw range noise**, as a cross-check: point the LiDAR at the flat
+   wall from block 2 and take the per-return residual to the fitted plane at
+   1, 2 and 3 m. Expect this to be SMALLER than (1): a circle centre is a fit
+   over many returns, but it also inherits projection and odometry jitter.
+
+No extra robot time — both reuse `b1_raw_driver`, `b2_wall` and block 5's
+capture. Set `measurement_variance` from (1) **before** anyone calibrates
+`k_σ`, and re-run the S1/S2 containment check afterwards: R is not a display
+parameter, it changes how much the tracker trusts each measurement and
+therefore changes the tracked positions the whole safety chain consumes.
 
 ---
 
@@ -252,11 +288,29 @@ T4_USE_SIM_TIME=false \
   with radius": +33 mm radius / 83 mm centre at r=0.30 in sim) either
   reproduces on real data or it does not. **Write down which** — the whole
   `fixed_inflation = 0.051` calibration rests on it.
-- **Per-track residuals for P-3's k_σ.** Keep the full residual series, not
-  summary statistics: `phase4_containment.py` on a `phase4_obstacles_dump.py`
-  replay of `b5_t4` produces the same per-pair record the sim calibration
-  used. That dataset is the deliverable that decides whether P-3 can be
-  implemented with a calibrated k_σ.
+- **Per-track residuals AND covariances for P-3's k_σ.** P-3 is now
+  *implemented* (fork patch 0007: `CircleObstacle.covariance`), so this is a
+  data drop, not a development task. `phase4_obstacles_dump.py` records `cov`
+  alongside the residual, and `calibrate_k_sigma.py` consumes the result
+  unchanged from sim:
+
+  ```bash
+  /usr/bin/python3 test/phase4_obstacles_dump.py 120 hw_b5.jsonl   # during replay
+  /usr/bin/python3 test/calibrate_k_sigma.py b5=hw_b5.jsonl --fixed 0.051
+  ```
+
+  **Set `measurement_variance` from block 1's measurement first** — otherwise
+  σ is the uncertainty of a tracker that has been told its LiDAR measures
+  centres to ±1 m, and the k_σ that comes out is a scale factor for the wrong
+  quantity (gap G1). `calibrate_k_sigma.py` now refuses to emit one in that
+  case rather than printing an authoritative-looking number. Also report
+  `corr(F_req, σ)`: sim gives +0.339, weak. If hardware does not improve on
+  that, the honest verdict is that the σ term is the wrong remedy and the
+  occlusion residual needs the detector-level arc-truncation fix instead.
+- **Arc-truncation check.** Place two props so one partly occludes the other
+  from the robot. The sim model says required inflation scales as
+  `F_req ≈ k(arc)·r` with k rising 0.22 → 0.96 as visibility falls 100 % → 50 %
+  (evidence/interim/circle_fit_bias.md). One 60 s bag tests the whole model.
 
 **Abort criteria:** no circles detected at all at 1 m ⇒ check `/scan` first
 (block 2 territory); if `/scan` is fine, record 60 s of `/scan` +
@@ -339,6 +393,37 @@ The hardware-path column is dominated by waiting for DLIO's scan-rate TF. If
 the Orin's per-scan processing is slower, that wait grows — **this is the
 number that decides conditional patch P-5** (broadcast `odom→base_link` from
 DLIO's 100 Hz `publishPose()` as well). Record it even if the gate passes.
+
+---
+
+## Block 9 (optional, off-robot) — what walking changed about the A/B
+
+Not a robot block. Recorded here because it changes how block 5's numbers
+should be read and what the follow-on closed-loop session must do.
+
+`phase4_ab_run.sh` (the §17.3 offline A/B) replays the fixture bags against a
+robot **pinned at (0,0,0)**. It scores command tracking, and it structurally
+cannot produce a collision rate or a clearance distribution, because nothing
+moves. `walk_ab_run.sh` is the closed-loop counterpart: g1_ctrl's policy
+walking under a scripted profile, DPCBF in the 1 kHz seam, the perception
+stack live, once per DPCBF mode on an identical seeded field. Both are needed
+and they answer different questions — keep running both.
+
+Consequences for 5B:
+
+* **The fixture bags have a perfectly stationary sensor.** `s1_surveyed`,
+  `s2_cross_*`, `s3_swarm` and `s4_occlusion` were recorded with a constant
+  grounded `qpos` (`make_scenario_scene.grounded_qpos`). Every containment and
+  A/B number derived from them is therefore a **lower bound** on what a moving
+  platform sees. When a hardware capture is taken with the robot walking, do
+  not compare it against the fixture numbers as if they were like-for-like —
+  say which platform state each came from.
+* **Bring-up on hardware is the same procedure the scripted profile encodes**:
+  hold the robot, `L2+up` → FixStand, `R2+A` → RLBase, *then* lower it. Do not
+  lower onto FixStand's PD hold pose.
+* **`walk_ab_run.sh` needs no bags** — it is a live session — so it is the
+  cheapest way to re-verify the whole chain on the target before block 5, if
+  there is a safe space to walk in.
 
 ---
 
