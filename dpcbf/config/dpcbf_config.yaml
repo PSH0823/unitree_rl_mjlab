@@ -11,7 +11,7 @@ dynamic_obstacles:
   #              circumscribed radius of the body (~0.151 * standing height,
   #              i.e. 0.26 m at 1.75 m), so tracking accuracy is measured
   #              against the widest point, not the torso.
-  shape: cylinder
+  shape: human
 
   # A radius and a constant speed are sampled once per obstacle at startup.
   radius_range: [0.2, 0.3]         # meters (cylinder only)

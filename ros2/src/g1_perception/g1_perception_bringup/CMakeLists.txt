@@ -26,6 +26,10 @@ install(PROGRAMS
         scripts/hw_diagnostics.py
         scripts/hw_session_metadata.py
         scripts/config_diff.py
+        # Stage 10 case A: the console read-out of what perception believes,
+        # in the robot's own frame. Belongs beside the probes, not in test/,
+        # because it is run BY the operator DURING the session.
+        scripts/hw_obstacle_watch.py
         DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

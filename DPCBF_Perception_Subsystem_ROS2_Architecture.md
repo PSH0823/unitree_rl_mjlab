@@ -61,7 +61,7 @@ The previous roadmap (branch `dpcbf_perception`, ~40k lines) implemented raycast
                                     ▼
               [pcl_ros CropBox self-filter]        (unchanged pkg)
                                     ▼
-              [patchwork++ ground seg — rough-terrain phase only]
+              <!-- [patchwork++ ground seg — rough-terrain phase only] -->
                                     ▼
               [pointcloud_to_laserscan]            (unchanged pkg, binary)
                                     ▼   /scan  (base_footprint frame)

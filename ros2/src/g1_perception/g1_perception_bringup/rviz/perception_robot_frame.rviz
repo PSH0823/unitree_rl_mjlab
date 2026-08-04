@@ -1,0 +1,117 @@
+# Robot-frame hardware layout (Phase 5C, stage 10 case B).
+#
+# perception.rviz is odom-fixed: the world stands still and the robot moves
+# through it, which is the right picture for the §4.6 overlay and the wrong
+# one for "is that prop 2 m in front of me". Here Fixed Frame is base_link, so
+# the robot sits at the origin, the grid is the robot's own metre grid, and a
+# surveyed prop at 2 m reads 2 m off the grid without arithmetic.
+#
+# Also unlike perception.rviz: no GT layer and no DPCBF overlay (neither
+# exists on hardware — the hardware-only launch already points the GT relay at
+# a dead topic and forces overlay:=off), RawObstacles and Scan are ON because
+# the extractor's input and its per-frame output are exactly what stage 10 is
+# judging, and LivoxCloud is off so the obstacle layers stay visible from
+# above (tick it on for projection debugging).
+#
+#   ros2 launch g1_perception_bringup g1_perception_hardware_only.launch.py \
+#       driver:=on lio:=dlio use_rviz:=true \
+#       rviz_config:=$(ros2 pkg prefix g1_perception_bringup)/share/g1_perception_bringup/rviz/perception_robot_frame.rviz
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid (1 m, base_link)
+      Plane Cell Count: 16
+      Cell Size: 1
+      Reference Frame: base_link
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Show Names: true
+      Marker Scale: 0.5
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: false
+      Name: LivoxCloud
+      Topic:
+        Value: /livox/lidar
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+      Use Fixed Frame: true
+    # The extractor's INPUT. When a prop is missing from the obstacle layers
+    # this display says whether it was ever in the 2-D scan at all — the
+    # stage-10 failure sign ("no circle at 1 m -> check /scan first").
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: true
+      Name: Scan (extractor input)
+      Topic:
+        Value: /scan
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 4
+      Color: 255; 255; 0
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: RawObstacles (grey, per-frame)
+      Topic:
+        Value: /raw_obstacles_marker_relay/markers
+        Depth: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: TrackedObstacles (orange, +uid)
+      Topic:
+        Value: /tracked_obstacles_marker_relay/markers
+        Depth: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: SafeObstacles (red, inflated)
+      Topic:
+        Value: /safe_obstacles_marker_relay/markers
+        Depth: 1
+    - Class: rviz_default_plugins/Odometry
+      Enabled: false
+      Name: Odom
+      Topic:
+        Value: /odom
+        Depth: 10
+      Keep: 12
+  Global Options:
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    # Stage 10 reads distances off the screen; without the Measure tool the
+    # operator falls back to eyeballing the grid.
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: TopDown2D
+      Scale: 90
+      Angle: 0
+      Target Frame: base_link
+      X: 0
+      Y: 0
+    Saved:
+      - Class: rviz_default_plugins/Orbit
+        Name: Orbit3D
+        Distance: 10
+        Pitch: 0.6
+        Yaw: 3.4
+        Focal Point:
+          X: 2
+          Y: 0
+          Z: 0.5
+Window Geometry:
+  Height: 900
+  Width: 1400
