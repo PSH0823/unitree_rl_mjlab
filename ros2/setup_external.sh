@@ -93,4 +93,12 @@ git -C src/external/livox_ros_driver2 apply --check ../../../patches/0008-livox-
 git -C src/external/obstacle_detector_2 apply --check ../../../patches/0009-obstacle-detector-p4-fit-radius-gate-and-drop-observability.patch 2>/dev/null \
   && git -C src/external/obstacle_detector_2 apply ../../../patches/0009-obstacle-detector-p4-fit-radius-gate-and-drop-observability.patch \
   || echo "obstacle_detector P-4 patch already applied"
+# P-5 (config honesty): P-2 removed the tracker's wall timer but kept parsing
+# `loop_rate` into a member nothing read, leaving the yaml a knob that looks
+# tunable and does nothing. Patch 0010 removes the dead member/read and turns
+# a config that still sets the (still-declared) name into an explicit
+# RCLCPP_WARN instead of a silent ignore.
+git -C src/external/obstacle_detector_2 apply --check ../../../patches/0010-obstacle-detector-p5-retire-inert-tracker-loop-rate.patch 2>/dev/null \
+  && git -C src/external/obstacle_detector_2 apply ../../../patches/0010-obstacle-detector-p5-retire-inert-tracker-loop-rate.patch \
+  || echo "obstacle_detector P-5 patch already applied"
 echo "External sources ready."

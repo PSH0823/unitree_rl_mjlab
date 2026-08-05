@@ -1,4 +1,14 @@
-# dpcbf_ros_adapter (§10.2/§10.3) — consumed in Phase 4. Appendix A verbatim.
+# dpcbf_ros_adapter (§10.2/§10.3) — Appendix A verbatim.
+#
+# LOADED BY simulate/src/main.cc (LoadAdapterConfig, adapter_config.h) at
+# ObstacleSource construction: this file IS the control surface for the
+# staleness ladder and the subscription topic. It is parsed with yaml-cpp,
+# not as a ROS parameter file — hence no `ros__parameters` block — and every
+# key is required; a missing key fails the bridge thread loudly at startup.
+# (Before Phase 5C it was documentation only and the compiled-in defaults in
+# obstacle_buffer.h governed; those defaults still exist and must be kept
+# equal to this file for offline consumers that never load it, e.g. t1_replay
+# and the unit tests.)
 dpcbf_ros_adapter:
   topic: /obstacles_safe
   max_age: 0.30              # s

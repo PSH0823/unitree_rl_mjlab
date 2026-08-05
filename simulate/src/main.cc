@@ -52,6 +52,9 @@
 #include "dpcbf_ros_adapter/obstacle_source.h"
 #ifdef UNITREE_MUJOCO_WITH_ROS2
 #include "ros2_bridge.h"
+// yaml loader for ObstacleSource's topic + staleness ladder; ROS2-build only
+// because that is the only build that constructs an ObstacleSource.
+#include "dpcbf_ros_adapter/adapter_config.h"
 #endif
 
 #include <fstream>
@@ -931,8 +934,10 @@ void *UnitreeSdk2BridgeThread(void *arg)
 
 #ifdef UNITREE_MUJOCO_WITH_ROS2
   // The seam behind ObstacleSource (§10.5). Constructed after SimRos2Bridge
-  // so rclcpp is already initialized (T10 order). Appendix-A staleness
-  // defaults; /obstacles_safe topic; /dpcbf/status diagnostics at 10 Hz.
+  // so rclcpp is already initialized (T10 order). Topic + §10.3 staleness
+  // ladder come from config/dpcbf_ros_adapter.yaml — the recorded Appendix-A
+  // file, which is the single control surface (editing the header defaults
+  // alone no longer changes a live run); /dpcbf/status diagnostics at 10 Hz.
   // The adapter node runs use_sim_time=false — it must never consume the
   // /clock this process publishes (§11.2 decision); every safety age is
   // sim-time t_query vs sim-time header stamps.
@@ -941,6 +946,20 @@ void *UnitreeSdk2BridgeThread(void *arg)
     dra::ObstacleSource::Config source_config;
     source_config.mode = mode;
     source_config.oracle = oracle_provider;
+    // Repo root the same way main() derives proj_dir: exe dir -> simulate/
+    // -> repo. The yaml is loaded from the source tree (the dpcbf_config.yaml
+    // precedent): the ROS2 install space never consumes this file.
+    const auto adapter_yaml =
+        std::filesystem::path(getExecutableDir()).parent_path().parent_path() /
+        "ros2/src/g1_perception/g1_perception_bringup/config/"
+        "dpcbf_ros_adapter.yaml";
+    try {
+      dra::LoadAdapterConfig(adapter_yaml, &source_config);
+    } catch (const std::exception& error) {
+      std::cerr << "Failed to load " << adapter_yaml.string() << ": "
+                << error.what() << std::endl;
+      return nullptr;
+    }
     obstacle_source = std::make_unique<dra::ObstacleSource>(source_config);
   }
   std::cout << "DPCBF obstacle source mode: "

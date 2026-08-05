@@ -1,0 +1,67 @@
+P-5 (config honesty): retire the tracker's inert `loop_rate` parameter.
+
+P-2 (patch 0004) removed the wall timer — the tracker is measurement-driven,
+paced by `sensor_rate` and per-message header stamps — but kept parsing
+`loop_rate` "for upstream compatibility", storing it in a member nothing
+read. That left obstacle_detector.yaml carrying a knob that looks tunable
+and does nothing, the exact shape of gap G2 (a config surface that silently
+diverges from behaviour).
+
+This patch removes the dead member and the dead read. The parameter name
+stays DECLARED so a config that still sets it is answered with an explicit
+RCLCPP_WARN ("inert since P-2, remove it") instead of being silently
+ignored — the same loud-explanation convention as bringup's
+ground_seg:=patchwork rejection. obstacle_detector.yaml drops its
+`loop_rate` entry in the same change (bringup side, not in this patch).
+
+Applies on top of patches 0003 + 0004 + 0007 + 0009.
+
+--- a/include/obstacle_detector/obstacle_tracker.h
++++ b/include/obstacle_detector/obstacle_tracker.h
+@@ -130,7 +130,6 @@
+   bool p_compensate_robot_velocity_;
+ 
+   double p_tracking_duration_;
+-  double p_loop_rate_;
+   double p_sampling_time_;
+   double p_sensor_rate_;
+   double p_min_correspondence_cost_;
+--- a/src/obstacle_tracker.cpp
++++ b/src/obstacle_tracker.cpp
+@@ -72,6 +72,9 @@
+   // Before using compensate_robot_velocity, consider using pointcloud input from map frame instead of base_link frame
+   nh_->declare_parameter("compensate_robot_velocity", rclcpp::PARAMETER_BOOL);
+   nh_->declare_parameter("sensor_rate", rclcpp::PARAMETER_DOUBLE);
++  // P-2 removed the wall timer, so there is no loop for a rate to drive.
++  // The name stays declared so a config that still sets it gets an explicit
++  // warning below instead of being silently ignored.
+   nh_->declare_parameter("loop_rate", rclcpp::PARAMETER_DOUBLE);
+   nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
+ 
+@@ -87,7 +90,15 @@
+   nh_->get_parameter_or("copy_segments", p_copy_segments_, true);
+   nh_->get_parameter_or("compensate_robot_velocity", p_compensate_robot_velocity_, false);
+   nh_->get_parameter_or("sensor_rate", p_sensor_rate_, 10.0);
+-  nh_->get_parameter_or("loop_rate", p_loop_rate_, 100.0);
++  double inert_loop_rate;
++  if (nh_->get_parameter("loop_rate", inert_loop_rate)) {
++    RCLCPP_WARN(nh_->get_logger(),
++                "obstacle_tracker: 'loop_rate' (%.1f) is INERT since P-2 — "
++                "the tracker is measurement-driven; pacing comes from "
++                "'sensor_rate' and per-message header stamps. Remove it from "
++                "the config.",
++                inert_loop_rate);
++  }
+   nh_->get_parameter_or("frame_id", p_frame_id_, string("map"));
+ 
+   nh_->get_parameter_or("tracking_duration", p_tracking_duration_, 2.0);
+@@ -100,8 +111,7 @@
+ 
+   // P-2: everything is clocked by the sensor. The nominal sampling time is
+   // the measurement period; per-message dt (from header stamps) overrides it
+-  // via setSamplingTime in obstaclesCallback. loop_rate is parsed for
+-  // compatibility but no longer drives anything.
++  // via setSamplingTime in obstaclesCallback.
+   p_sampling_time_ = 1.0 / p_sensor_rate_;
+   obstacles_.header.frame_id = p_frame_id_;
+ 
