@@ -53,6 +53,137 @@ ros2 run g1_perception_bringup config_diff.py     # 반드시 PASS를 출력해�
 
 ---
 
+## SSH로만 접속하는 경우 — session 운용 방식
+
+전제는 field runbook과 동일합니다. **onboard PC가 ROS 2, Livox driver, DLIO,
+perception, 모든 bag recorder를 실행하고, 노트북은 terminal과 file transfer
+역할만 합니다.** 노트북에 ROS 2 Humble이나 RViz, X11이 있다고 가정하지
+마십시오.
+
+### 1. tmux 없이 시작하지 마십시오
+
+SSH 연결이 끊기면 그 세션에서 띄운 launch와 `ros2 bag record`가 SIGHUP으로
+죽습니다. 그러면 bag이 중간에서 잘리고, 이 session의 규칙상 **bag이 없는
+Stage는 실패한 Stage**입니다. Wi-Fi로 접속한다면 이는 가능성이 아니라 시간
+문제입니다.
+
+```bash
+ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4 <user>@<onboard-pc>
+tmux new -s g1          # 연결이 끊긴 뒤: ssh ... ; tmux attach -t g1
+```
+
+Pane 배치(`Ctrl-b "` 가로 분할, `Ctrl-b %` 세로 분할, `Ctrl-b o` 이동):
+
+| pane | 용도 |
+|---|---|
+| 0 | `g1_perception_hardware_only.launch.py` (stack) |
+| 1 | `hw_obstacle_watch.py` (추론 결과 read-out) |
+| 2 | `hw_record.sh` (bag) |
+| 3 | 자유 — `ros2 topic hz`, `hw_tf_probe.py`, `ros2 node list` |
+
+**각 pane마다 environment block을 다시 붙여넣으십시오.** 새 pane은 tmux
+server가 시작될 때의 환경을 상속하므로, 그 뒤에 `export`한
+`ROS_DOMAIN_ID`/`CYCLONEDDS_URI`는 따라오지 않습니다. 이것이 "topic 이름은
+보이는데 data가 없다"의 가장 흔한 원인입니다. 매 pane에서 확인하십시오.
+
+```bash
+printenv RMW_IMPLEMENTATION ROS_DOMAIN_ID CYCLONEDDS_URI SESSION
+```
+
+### 2. 화면에 보인 것은 남지 않습니다 — 전부 파일로
+
+SSH 세션이 끊기면 scrollback도 사라집니다. 판단 근거가 되는 출력은 모두
+`$SESSION`에 씁니다.
+
+```bash
+ros2 run g1_perception_bringup hw_obstacle_watch.py --ros-args \
+    -p layout:="$SESSION/t4_layout.yaml" \
+    -p json:="$SESSION/stage10_watch.jsonl" -p duration:=60.0 \
+  2>&1 | tee "$SESSION/stage10_watch.txt"
+```
+
+(`json:=`은 machine-readable, `tee`는 사람이 읽을 기록입니다. 두 개를 모두
+남기십시오.)
+
+### 3. RViz — 선택지 세 가지
+
+| | 방법 | 언제 |
+|---|---|---|
+| **A(권장)** | 현장에서는 RViz를 쓰지 않음. `hw_obstacle_watch.py` + bag만 남기고, RViz는 나중에 workstation에서 **replay**로 봄 | 기본값. robot 시간을 소모하지 않고, 화질/대역폭 문제도 없음 |
+| B | `ssh -X`로 onboard PC의 RViz를 노트북 화면에 forwarding | 현장에서 꼭 그림을 봐야 할 때 |
+| C | 같은 LAN의 노트북에서 RViz를 직접 실행하고 DDS로 topic만 받음 | 노트북에 ROS 2 Humble + RViz가 **이미** 있을 때만 |
+
+**A가 기본입니다.** 이 session의 규칙이 "debug하지 말고 capture하라"이므로,
+현장에서 필요한 것은 "prop이 검출되고 있는가"이고 그건 case A의 콘솔 표로
+충분합니다. 그림은 bag에서 언제든 다시 만들 수 있습니다(아래 §4).
+
+**B — `ssh -X`.** RViz는 OpenGL 응용이라 X11 forwarding에서 매우 느립니다.
+Stage 10처럼 robot이 정지한 장면은 견딜 만하지만 point cloud를 켜면
+실질적으로 사용할 수 없습니다.
+
+```bash
+ssh -X -C <user>@<onboard-pc>        # -C: 압축
+export LIBGL_ALWAYS_SOFTWARE=1       # GL이 없거나 forwarding에서 깨질 때
+RVIZ_CFG=$(ros2 pkg prefix g1_perception_bringup)/share/g1_perception_bringup/rviz/perception_robot_frame.rviz
+rviz2 -d "$RVIZ_CFG"                 # stack은 pane 0에서 이미 돌고 있어야 함
+```
+
+- `use_rviz:=true`로 launch에 붙이지 말고 **RViz만 따로 띄우십시오.** stack은
+  tmux pane 0에 두어야 SSH가 끊겨도 살아남습니다. Marker relay는
+  `viz.launch.py`가 띄우므로, RViz만 단독으로 띄울 때는 relay도 함께
+  필요합니다:
+  ```bash
+  ros2 launch g1_perception_bringup viz.launch.py use_sim_time:=false \
+      overlay:=off obstacles_topic:=/hw/no_ground_truth rviz_config:="$RVIZ_CFG"
+  ```
+- `cannot open display`가 나오면 onboard PC에 `xauth`가 설치되어 있는지,
+  sshd에 `X11Forwarding yes`가 설정되어 있는지 확인하십시오.
+- LivoxCloud display는 **끈 상태로** 두십시오(기본값). 켜는 순간 forwarding
+  대역폭이 무너집니다.
+
+**C — 노트북에서 RViz.** 노트북이 robot과 **같은 ROS network**에 있어야 하고,
+`RMW_IMPLEMENTATION`, `ROS_DOMAIN_ID`가 같아야 하며, 노트북의
+`CYCLONEDDS_URI`는 **robot에 도달하는 NIC**을 지정해야 합니다(`lo`가 아님 —
+§12.2의 함정). Wi-Fi에서는 multicast discovery가 막혀 있는 경우가 많아
+topic 이름조차 안 보일 수 있습니다. 이 경로는 **검증되지 않았습니다.** 되면
+쓰고, 안 되면 robot 시간을 여기에 쓰지 말고 A로 돌아가십시오.
+
+### 4. Replay — 현장 이후 workstation에서 RViz로 보기
+
+Bag에는 marker가 들어 있지 않습니다(marker는 relay가 `Obstacles` message로부터
+실시간 생성). 따라서 bag을 재생하면서 relay + RViz를 함께 띄우면 현장 화면을
+그대로 재구성할 수 있습니다. `/tf`, `/tf_static`, `/odom`이 bag에 있으므로
+`base_link` 기준 그림도 동일하게 나옵니다.
+
+Shell 1(먼저 띄울 것):
+
+```bash
+RVIZ_CFG=$(ros2 pkg prefix g1_perception_bringup)/share/g1_perception_bringup/rviz/perception_robot_frame.rviz
+ros2 launch g1_perception_bringup viz.launch.py use_sim_time:=true \
+    overlay:=off obstacles_topic:=/hw/no_ground_truth rviz_config:="$RVIZ_CFG"
+```
+
+Shell 2:
+
+```bash
+ros2 bag play "$SESSION/stage10_<t>" --clock      # --clock 필수: 위가 use_sim_time:=true
+```
+
+같은 bag에 대해 콘솔 표도 다시 볼 수 있습니다(현장에서 `layout:=`을 빠뜨렸거나
+측량값을 나중에 고쳤을 때 유용합니다).
+
+```bash
+ros2 run g1_perception_bringup hw_obstacle_watch.py --ros-args \
+    -p use_sim_time:=true -p layout:="$SESSION/t4_layout.yaml"
+```
+
+TF가 replay에서 보이지 않으면 `/tf_static`의 QoS를 의심하십시오. rosbag2는
+기록된 QoS(transient local)를 재생 시 그대로 사용하므로 보통 문제가 없지만,
+다른 도구로 변환한 bag이라면 `--qos-profile-overrides-path`로 `/tf_static`을
+`durability: transient_local`로 지정해야 합니다.
+
+---
+
 ## Stage 0 — robot 숙지, software 사용 안 함
 
 **목적.** 무엇이든 실행하기 전에 옆에 있는 robot이 어떤 장비인지 숙지합니다.
@@ -685,6 +816,12 @@ ros2 run g1_perception_bringup hw_record.sh "$SESSION" 10 60 \
 ```
 
 ### Case B — onboard PC에 모니터가 연결된 경우: RViz
+
+> **SSH로만 접속한다면** 이 case를 현장에서 그대로 쓰지 마십시오. Case A로
+> 진행하고 bag을 남긴 뒤, 위의 [SSH로만 접속하는 경우](#ssh로만-접속하는-경우--session-운용-방식)
+> §4의 replay 절차로 나중에 같은 화면을 재구성하는 것이 기본 경로입니다.
+> 현장에서 굳이 그림이 필요하면 같은 절의 §3-B(`ssh -X`)를 쓰되, stack은
+> tmux pane에 두고 RViz만 따로 띄우십시오.
 
 `use_rviz:=true`는 committed layout(`perception.rviz`)을 여는데, 그 layout은
 **Fixed Frame이 `odom`**이고 GT/DPCBF overlay 중심입니다. Stage 10에서는

@@ -126,8 +126,13 @@ class ObstacleWatch(Node):
                 % (layout, len(self.targets), self.match_radius))
 
         self.buffer = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
+        # spin_thread=True on purpose: the lookups below happen inside a timer
+        # callback, so with a single-threaded listener the `tf_timeout` wait
+        # would block the very executor that has to deliver /tf — the timeout
+        # could only ever expire. A dedicated listener thread makes it mean
+        # what it says.
         self.listener = tf2_ros.TransformListener(self.buffer, self,
-                                                  spin_thread=False)
+                                                  spin_thread=True)
         # last message + arrival wall-clock + a message counter per topic, so
         # the header can show rate and staleness. A topic that is advertised
         # but silent must look different from one that is publishing zero
@@ -274,6 +279,13 @@ def main():
     except (KeyboardInterrupt, SystemExit) as exc:
         code = getattr(exc, 'code', 0) or 0
     finally:
+        # Stop the listener's own executor BEFORE rclpy shuts down, or its
+        # thread dies inside spin() and dumps an ExternalShutdownException
+        # traceback over the last table the operator wanted to read.
+        try:
+            node.listener.executor.shutdown()
+        except Exception:
+            pass
         if node.jf:
             node.jf.close()
         if not any(node.count.values()):
