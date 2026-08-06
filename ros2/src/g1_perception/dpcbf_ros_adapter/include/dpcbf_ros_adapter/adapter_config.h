@@ -21,6 +21,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include "dpcbf_ros_adapter/obstacle_source.h"
+#include "dpcbf_ros_adapter/viz_publisher.h"
 
 namespace dpcbf_ros_adapter {
 
@@ -59,6 +60,42 @@ inline void LoadAdapterConfig(const std::filesystem::path& path,
   }
   config->topic = topic;
   config->staleness = staleness;
+}
+
+// The plot bridge's control surface (same file, own section). Returns the
+// section's `enabled` flag; `config` is filled either way. Same discipline
+// as above: the section and every key in it are REQUIRED, so a yaml that
+// predates the plot bridge fails loudly instead of silently running without
+// visualization the operator thinks is on.
+inline bool LoadVizBridgeConfig(const std::filesystem::path& path,
+                                DpcbfVizPublisher::Config* config) {
+  const YAML::Node root = YAML::LoadFile(path.string());
+  const YAML::Node node = root["plot_bridge"];
+  if (!node) {
+    throw std::runtime_error("missing 'plot_bridge' in " + path.string());
+  }
+  auto required = [&path](const YAML::Node& parent, const char* key) {
+    if (!parent[key]) {
+      throw std::runtime_error(std::string("missing '") + key + "' in " +
+                               path.string());
+    }
+    return parent[key];
+  };
+  const bool enabled = required(node, "enabled").as<bool>();
+  const std::string topic = required(node, "topic").as<std::string>();
+  const double rate_hz = required(node, "rate_hz").as<double>();
+  const std::string frame_id = required(node, "frame_id").as<std::string>();
+  // 20–50 Hz is the design band; 1–100 the sanity range. Rates beyond the
+  // control rate are meaningless (each tick publishes at most once).
+  if (topic.empty() || topic.front() != '/' || rate_hz < 1.0 ||
+      rate_hz > 100.0 || frame_id.empty()) {
+    throw std::runtime_error("invalid plot_bridge parameter range in " +
+                             path.string());
+  }
+  config->topic = topic;
+  config->rate_hz = rate_hz;
+  config->frame_id = frame_id;
+  return enabled;
 }
 
 }  // namespace dpcbf_ros_adapter

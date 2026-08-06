@@ -19,6 +19,7 @@
   <depend>rclcpp</depend>
   <depend>obstacle_detector</depend>
   <depend>diagnostic_msgs</depend>
+  <depend>dpcbf_viz_msgs</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 

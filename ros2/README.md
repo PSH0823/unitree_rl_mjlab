@@ -2,6 +2,10 @@
 
 Colcon workspace for the perception subsystem.
 
+- **실험 당일 — 컴퓨터 3대 구성과 운용 순서:** **[`doc/README.md`](doc/README.md)**
+  (Blackbox / onboard / 노트북이 각각 무엇을 하고, 어디에 무엇을 치고,
+  무엇이 정상이고, 안 되면 무엇부터 보는지. 당일에는 이 파일 하나로 시작).
+
 - **Architecture, contracts, phase gates, the progress log:**
   `../DPCBF_Perception_Subsystem_ROS2_Architecture.md` (the single source of truth).
 - **How to run any of this** — bring the stack up, see it in RViz, walk the

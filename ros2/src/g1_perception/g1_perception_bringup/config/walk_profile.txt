@@ -1,0 +1,22 @@
+# Scripted walking profile (ScriptedJoystick, main.cc): "t lx ly rx [buttons]",
+# sim-time breakpoints, piecewise-constant hold; buttons held to the next
+# breakpoint, "-" = none. RESTORED VERBATIM from operator_runbook.md §6.2 —
+# the file the walk harnesses copy (walk_ab_run.sh, walk_overlay_run.sh,
+# run_live_w4_view.sh, walk_plot_session.sh) but which was never committed.
+#
+# Chords are STAGGERED (axis half >= 0.5 s before the button edge): the FSM
+# receiver low-passes L2/R2 with smooth=0.03 vs threshold 0.5 (~23 ticks), so
+# a simultaneous "L2,up" never fires (runbook §6.1.2).
+#
+# Timeline: FixStand @15.5, RLBase (policy) @21.5, elastic band lowered by
+# UNITREE_MUJOCO_BAND_RELEASE (34,6 preferred; 24,4 = recorded A/B matrix),
+# walking from t=40 — 0.4 m/s forward with a -0.35 yaw-axis turn.
+# t      lx     ly     rx     buttons
+0.0      0.0    0.0    0.0    -
+15.0     0.0    0.0    0.0    L2
+15.5     0.0    0.0    0.0    L2,up
+16.0     0.0    0.0    0.0    -
+21.0     0.0    0.0    0.0    R2
+21.5     0.0    0.0    0.0    R2,A
+22.0     0.0    0.0    0.0    -
+40.0     0.0    0.20   0.35   -

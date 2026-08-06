@@ -30,7 +30,20 @@ install(PROGRAMS
         # in the robot's own frame. Belongs beside the probes, not in test/,
         # because it is run BY the operator DURING the session.
         scripts/hw_obstacle_watch.py
+        # Stage 5 case: the stationary-drift criterion, computed live instead
+        # of offline from the bag.
+        scripts/hw_odom_drift.py
         DESTINATION lib/${PROJECT_NAME})
+# Visualization-link environment (sourced, not run): Computer 2/3 CycloneDDS
+# setup for the off-board plotting client. Installed under share/ because
+# they are `source`d by path, not executed via `ros2 run`; the XMLs they
+# select are in share/${PROJECT_NAME}/config/cyclonedds (DIRECTORY install
+# above). viz_env.example documents the per-machine ~/.g1_viz_env variables.
+install(PROGRAMS
+        scripts/viz_env_computer2.sh
+        scripts/viz_env_computer3.sh
+        DESTINATION share/${PROJECT_NAME}/env)
+install(FILES scripts/viz_env.example DESTINATION share/${PROJECT_NAME}/env)
 
 if(BUILD_TESTING)
   # Integration smoke (§16.1): needs the ROS2-enabled simulator running;

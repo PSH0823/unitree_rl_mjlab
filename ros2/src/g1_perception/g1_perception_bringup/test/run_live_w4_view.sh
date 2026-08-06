@@ -94,6 +94,10 @@ pkill -KILL -f 'unitree_mujoc[o]' 2>/dev/null
 # reconfigured in place without editing tracked files.
 rm -rf "$TREE"; mkdir -p "$TREE/simulate/build" "$TREE/dpcbf/config"
 ln -sfn "$REPO/src" "$TREE/src"
+# Since Phase 5C main.cc loads dpcbf_ros_adapter.yaml (and now the plot_bridge
+# section) from <repo>/ros2/... derived from the EXE path - the shadow tree
+# must expose ros2/ or the simulator refuses to start.
+ln -sfn "$REPO/ros2" "$TREE/ros2"
 cp "$REPO/simulate/build_ros2/unitree_mujoco" "$TREE/simulate/build/"
 sed -e 's/^use_joystick: .*/use_joystick: 0/' \
     -e 's/^print_scene_information: .*/print_scene_information: 0/' \

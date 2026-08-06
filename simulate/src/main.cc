@@ -55,6 +55,9 @@
 // yaml loader for ObstacleSource's topic + staleness ladder; ROS2-build only
 // because that is the only build that constructs an ObstacleSource.
 #include "dpcbf_ros_adapter/adapter_config.h"
+// Control->plot seam: the 30 Hz /dpcbf/plot decimator for the off-board
+// plotting client. ROS2-build only for the same reason as ObstacleSource.
+#include "dpcbf_ros_adapter/viz_publisher.h"
 #endif
 
 #include <fstream>
@@ -942,6 +945,7 @@ void *UnitreeSdk2BridgeThread(void *arg)
   // /clock this process publishes (§11.2 decision); every safety age is
   // sim-time t_query vs sim-time header stamps.
   static std::unique_ptr<dra::ObstacleSource> obstacle_source;
+  static std::unique_ptr<dra::DpcbfVizPublisher> viz_publisher;
   {
     dra::ObstacleSource::Config source_config;
     source_config.mode = mode;
@@ -961,6 +965,39 @@ void *UnitreeSdk2BridgeThread(void *arg)
       return nullptr;
     }
     obstacle_source = std::make_unique<dra::ObstacleSource>(source_config);
+
+    // Plot bridge (visualization runbook): same yaml, own section. Env
+    // UNITREE_DPCBF_PLOT=0/1 overrides `enabled`, UNITREE_DPCBF_PLOT_RATE
+    // overrides `rate_hz`, both for one run without a rebuild. Constructed
+    // after SimRos2Bridge for the same T10 init-order reason as the source.
+    dra::DpcbfVizPublisher::Config viz_config;
+    bool viz_enabled = false;
+    try {
+      viz_enabled = dra::LoadVizBridgeConfig(adapter_yaml, &viz_config);
+    } catch (const std::exception& error) {
+      std::cerr << "Failed to load plot_bridge from " << adapter_yaml.string()
+                << ": " << error.what() << std::endl;
+      return nullptr;
+    }
+    if (const char* env = std::getenv("UNITREE_DPCBF_PLOT")) {
+      viz_enabled = std::string(env) != "0";
+    }
+    if (const char* env = std::getenv("UNITREE_DPCBF_PLOT_RATE")) {
+      const double rate = std::atof(env);
+      if (rate < 1.0 || rate > 100.0) {
+        std::cerr << "UNITREE_DPCBF_PLOT_RATE must be in [1, 100], got "
+                  << env << std::endl;
+        return nullptr;
+      }
+      viz_config.rate_hz = rate;
+    }
+    if (viz_enabled) {
+      viz_publisher = std::make_unique<dra::DpcbfVizPublisher>(viz_config);
+      std::cout << "DPCBF plot bridge: " << viz_config.topic << " @ "
+                << viz_config.rate_hz << " Hz" << std::endl;
+    } else {
+      std::cout << "DPCBF plot bridge: disabled" << std::endl;
+    }
   }
   std::cout << "DPCBF obstacle source mode: "
             << (mode == dra::ObstacleSource::Mode::kOracle ? "oracle"
@@ -980,6 +1017,45 @@ void *UnitreeSdk2BridgeThread(void *arg)
     const auto filtered = safety_filter.Filter(robot, scaled, snap.obstacles);
     dpcbf_visualizer.Update(robot, snap.obstacles, filtered);
     const auto axes = dra::CommandToAxes(filtered.command, seam_limits);
+    if (viz_publisher) {
+      // Single-caller by design (same contract as GetObstacles), so a plain
+      // static tick is safe. Push is a bounded memcpy behind a try_lock —
+      // it never blocks this loop and never touches DDS.
+      static std::uint64_t plot_tick = 0;
+      dra::PlotSample ps;
+      ps.tick = ++plot_tick;
+      ps.t_ctrl = t_query;
+      ps.mode = static_cast<std::uint8_t>(obstacle_source->mode());
+      ps.robot_x = robot.x;
+      ps.robot_y = robot.y;
+      ps.robot_phi = robot.phi;
+      ps.robot_sagittal_velocity = robot.sagittal_velocity;
+      ps.robot_lateral_velocity = robot.lateral_velocity;
+      ps.nominal = {desired.sagittal, desired.lateral, desired.yaw_rate};
+      ps.scaled = {scaled.sagittal, scaled.lateral, scaled.yaw_rate};
+      ps.safe = {filtered.command.sagittal, filtered.command.lateral,
+                 filtered.command.yaw_rate};
+      ps.command_scale = snap.command_scale;
+      ps.solved = filtered.solved;
+      ps.active_constraints = filtered.active_constraints;
+      ps.active_dpcbf_constraints = filtered.active_dpcbf_constraints;
+      ps.active_ecbf_constraints = filtered.active_ecbf_constraints;
+      for (int i = 0; i < 3; ++i) ps.acceleration[i] = filtered.acceleration[i];
+      ps.staleness_state = static_cast<std::uint8_t>(snap.state);
+      ps.obstacle_age_s = std::isinf(snap.age_s) ? -1.0 : snap.age_s;
+      ps.obstacle_total = static_cast<std::uint32_t>(snap.obstacles.size());
+      const std::size_t n = std::min(filtered.selected_obstacles.size(),
+                                     dra::PlotSample::kMaxObstacles);
+      ps.obstacle_count = static_cast<std::uint32_t>(n);
+      for (std::size_t i = 0; i < n; ++i) {
+        const auto& so = filtered.selected_obstacles[i];
+        ps.obstacles[i] = {so.obstacle.id,         so.obstacle.x,
+                           so.obstacle.y,          so.obstacle.radius,
+                           so.obstacle.velocity_x, so.obstacle.velocity_y,
+                           so.distance,            so.constraint.h};
+      }
+      viz_publisher->Push(ps);
+    }
     if (filter_io_log && filter_io_log->enabled()) {
       dra::FilterIoPrefix prefix{};
       prefix.t = t_query;

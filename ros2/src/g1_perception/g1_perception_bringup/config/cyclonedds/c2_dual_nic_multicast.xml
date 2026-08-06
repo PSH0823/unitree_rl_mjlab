@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Computer 2 ONLY, when the Computer 1 sensor network and the Computer 3
+     visualization network are DIFFERENT NICs: Cyclone participates on both,
+     multicast discovery on both.
+
+     Env vars:
+       G1_SENSOR_IFACE  NIC toward Computer 1 (G1 blackbox / LiDAR net,
+                        e.g. eth0 on 192.168.123.x)
+       G1_VIZ_IFACE     NIC toward Computer 3 (e.g. wlan0)
+
+     If both nets are one NIC, use viz_multicast.xml instead. If the ROS
+     side already pins a single NIC via a hand-written ~/cyclonedds.xml
+     (perception runbook), REPLACE that URI with this file for DPCBF+viz
+     sessions - CYCLONEDDS_URI is one value per process; two XMLs do not
+     merge. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="${G1_SENSOR_IFACE}"/>
+        <NetworkInterface name="${G1_VIZ_IFACE}"/>
+      </Interfaces>
+      <AllowMulticast>default</AllowMulticast>
+    </General>
+  </Domain>
+</CycloneDDS>

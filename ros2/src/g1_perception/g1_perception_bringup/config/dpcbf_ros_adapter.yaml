@@ -14,3 +14,16 @@ dpcbf_ros_adapter:
   max_age: 0.30              # s
   fade_out: 0.30             # s
   hold_after_stale: 1.0      # s
+
+# Control-side plot bridge (dpcbf_ros_adapter::DpcbfVizPublisher): the
+# decimated per-tick DPCBF sample for the off-board plotting client
+# (Computer 3). Read by the SAME LoadVizBridgeConfig call site in main.cc at
+# startup; every key is required. `enabled: false` (or env
+# UNITREE_DPCBF_PLOT=0) removes the publisher entirely — the control seam
+# then makes no rclcpp calls beyond what it already made. Env
+# UNITREE_DPCBF_PLOT_RATE overrides rate_hz for one run without a rebuild.
+plot_bridge:
+  enabled: true
+  topic: /dpcbf/plot
+  rate_hz: 30.0              # plot samples/s (design band 20-50)
+  frame_id: odom

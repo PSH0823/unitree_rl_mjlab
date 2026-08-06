@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Computer 2 <-> Computer 3 visualization link, ONE NIC, multicast
+     discovery (the default and preferred mode when the network allows it).
+
+     Env vars (expanded by CycloneDDS at startup; set by
+     scripts/viz_env_computer{2,3}.sh):
+       G1_VIZ_IFACE   the interface name carrying the visualization traffic
+                      (e.g. eth0, wlan0). REQUIRED - Cyclone fails loudly if
+                      the variable is unset, which is the intended behavior:
+                      a wrong-NIC default that "works" on the bench is how a
+                      robot session ends up discovering nothing.
+
+     Used via CYCLONEDDS_URI=file://<path-to-this-file> together with
+     RMW_IMPLEMENTATION=rmw_cyclonedds_cpp and a shared ROS_DOMAIN_ID. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="${G1_VIZ_IFACE}"/>
+      </Interfaces>
+      <AllowMulticast>default</AllowMulticast>
+    </General>
+  </Domain>
+</CycloneDDS>

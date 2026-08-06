@@ -482,6 +482,12 @@ ros2 run g1_perception_bringup hw_record.sh "$SESSION" 5 600 \
 
 # shell C — record 중 실행
 ros2 topic hz /odom
+# 정지 상태 drift를 현장에서 바로 판정(offline 계산을 기다리지 않음).
+# 로봇을 건드리지 마십시오. settle 5 s는 DLIO의 IMU calibration 3 s +
+# startup transient를 기준 pose에서 제외하기 위한 것입니다.
+ros2 run g1_perception_bringup hw_odom_drift.py --ros-args \
+    -p duration:=60.0 -p json:="$SESSION/stage5_drift.json" \
+    2>&1 | tee "$SESSION/stage5_drift.txt"
 ros2 run g1_perception_bringup hw_tf_probe.py --ros-args \
     -p duration:=120.0 -p json:="$SESSION/stage5_tf_probe.json" \
     2>&1 | tee "$SESSION/stage5_tf_probe.txt"
@@ -508,6 +514,10 @@ LiDAR stamp에 TF가 존재합니다(`hw_tf_probe` success fraction ≥ 0.95).
 
 **`/odom`이 존재한다는 이유만으로 유효한 odometry라고 판단하지 마십시오.**
 `/odom`은 DLIO가 시작되자마자 존재하며 초기 stamp 값은 실제로 0입니다.
+`hw_odom_drift.py`는 stamp 0인 sample을 세어서 제외하고 그 개수를 요약에
+표시합니다 — "drift 0"이 "완벽"인지 "아무것도 안 돌고 있음"인지 구분하기
+위해서입니다. 60초 판정은 10분 bag 분석을 대체하지 않는 **현장 조기
+경보**이며, 최종 수치는 그대로 bag에서 산출합니다.
 
 **실패 징후.** Initialisation이 되지 않음, 급격한 pose jump, 상하가 뒤집힌
 orientation, 큰 z offset, 증가하는 drift, 일관되지 않은 timestamp, TF 불연속,
