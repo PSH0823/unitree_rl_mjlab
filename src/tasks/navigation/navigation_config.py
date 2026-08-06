@@ -46,7 +46,7 @@ class RobotCfg:
   safety_factor: float = 1.05
   eps_v: float = 0.05
   eps_d: float = 0.05
-  collision_grace_s: float = 0.5
+  collision_grace_s: float = 0
 
 
 @dataclass

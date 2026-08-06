@@ -57,7 +57,7 @@ qp_parameters:
   obstacle_priority: 1
 
   # exponential CBF (eCBF) parameters for distance between robot and obstacles
-  ecbf_enabled: true
+  ecbf_enabled: false
   alpha_ecbf: 100.0
   # Optimal-Decay CBF (ODCBF) parameters
   odcbf_enabled: false
