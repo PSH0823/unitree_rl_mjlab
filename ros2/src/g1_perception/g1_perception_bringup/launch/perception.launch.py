@@ -63,8 +63,13 @@ def generate_launch_description():
         package='obstacle_detector',
         plugin='obstacle_detector::ObstacleExtractorComponent',
         name='obstacle_extractor',
+        # Keep the critical frame setting inline.  On Foxy, parameter-file
+        # overrides for loaded components can be dropped silently; without
+        # this explicit override obstacle_detector falls back to ``map``.
         parameters=[os.path.join(_CONFIG, 'obstacle_detector.yaml'),
-                    {'use_sim_time': use_sim_time}],
+                    {'use_sim_time': use_sim_time,
+                     'frame_id': 'odom',
+                     'transform_coordinates': True}],
         remappings=[('scan', '/scan'),
                     ('raw_obstacles', '/raw_obstacles')],
         extra_arguments=_INTRA,
@@ -74,7 +79,8 @@ def generate_launch_description():
         plugin='obstacle_detector::ObstacleTrackerComponent',
         name='obstacle_tracker',
         parameters=[os.path.join(_CONFIG, 'obstacle_detector.yaml'),
-                    {'use_sim_time': use_sim_time}],
+                    {'use_sim_time': use_sim_time,
+                     'frame_id': 'odom'}],
         remappings=[('raw_obstacles', '/raw_obstacles'),
                     ('tracked_obstacles', '/tracked_obstacles')],
         extra_arguments=_INTRA,

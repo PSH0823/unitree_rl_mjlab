@@ -6,5 +6,6 @@
         "/usr/include/opencv4"
     ],
     "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "cmake.sourceDirectory": "/home/unitree/dyros_ws/sanghyuk_ws/unitree_rl_mjlab/dpcbf"
 }

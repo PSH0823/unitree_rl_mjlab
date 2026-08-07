@@ -2,15 +2,14 @@
   "_comment": [
     "Mid360 network configuration for the G1 (§12, Phase 5A).",
     "",
-    "!!! THE IP ADDRESSES BELOW ARE UPSTREAM DEFAULTS, NOT THIS ROBOT'S. !!!",
-    "They are placeholders pending Q-1 (which G1 variant / onboard PC, which",
-    "network the Mid360 sits on, which interface the host uses). Filling them",
-    "in is checklist step 5B-1; test/hw_config_check.py refuses to pass until",
-    "host_net_info IPs are actually assigned to a local interface, so a wrong",
-    "value fails on the bench instead of silently producing no points.",
-    "",
-    "Mid360 IP convention: 192.168.1.1XX where XX is the last two digits of",
-    "the serial number (verify against the sticker on the unit).",
+    "IPs verified on-robot 2026-08-07 (checklist 5B-1): host_net_info is the",
+    "Jetson's eth0 address (192.168.123.164); lidar_configs.ip is the Mid360",
+    "itself at 192.168.123.120 (Unitree factory setting on the 123 subnet,",
+    "MAC 8c:58:23:89:39:7a — the stock Livox 192.168.1.1XX serial convention",
+    "does NOT apply, Unitree reflashes it). test/hw_config_check.py refuses",
+    "to pass until host_net_info IPs are actually assigned to a local",
+    "interface, so a wrong value fails on the bench instead of silently",
+    "producing no points.",
     "",
     "extrinsic_parameter stays identity by decree (§8.3): the driver emits",
     "points in the sensor frame and TF (g1_description) does the rest. Do not",
@@ -34,13 +33,13 @@
       "log_data_port": 56500
     },
     "host_net_info": {
-      "cmd_data_ip": "192.168.1.5",
+      "cmd_data_ip": "192.168.123.164",
       "cmd_data_port": 56101,
-      "push_msg_ip": "192.168.1.5",
+      "push_msg_ip": "192.168.123.164",
       "push_msg_port": 56201,
-      "point_data_ip": "192.168.1.5",
+      "point_data_ip": "192.168.123.164",
       "point_data_port": 56301,
-      "imu_data_ip": "192.168.1.5",
+      "imu_data_ip": "192.168.123.164",
       "imu_data_port": 56401,
       "log_data_ip": "",
       "log_data_port": 56501
@@ -48,7 +47,7 @@
   },
   "lidar_configs": [
     {
-      "ip": "192.168.1.12",
+      "ip": "192.168.123.120",
       "pcl_data_type": 1,
       "pattern_mode": 0,
       "extrinsic_parameter": {

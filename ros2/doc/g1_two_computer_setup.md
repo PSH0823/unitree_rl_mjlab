@@ -223,9 +223,11 @@ sudo apt-get install -y ros-foxy-rviz2 \
 > 없습니다: foxy 브랜치는 CycloneDDS **0.7**의 `ddsi_sertopic` API로
 > 작성되어 있는데 이 워크스페이스는 unitree_sdk2 때문에 **0.10.2**를 핀하고,
 > humble 브랜치는 Foxy에 없는 rmw 헤더를 요구합니다. 양쪽을 만족하는 소스
-> 조합이 존재하지 않습니다. 런타임에는 이 0.7 빌드 rmw가 워크스페이스의
-> 0.10.2 `libddsc.so.0`을 로드해서 정상 동작합니다 (0.10.2가 구 ABI를
-> 유지했고, `t10_dds_coexistence` 게이트가 Foxy에서 이를 확인합니다).
+> 조합이 존재하지 않습니다. 런타임에는 이 0.7 빌드 rmw가 `~/cyclonedds_ws`
+> underlay의 0.10.2 `libddsc.so.0`을 로드해서 정상 동작합니다 (0.10.2가 구
+> ABI를 유지했고, `t10_dds_coexistence` 게이트가 Foxy에서 이를 확인합니다).
+> 같은 이유로 CycloneDDS 0.10.2 자체도 워크스페이스에서 빌드하지 않고 이
+> underlay 것을 씁니다 — A-5의 `--packages-skip` 참조.
 
 > **Foxy는 EOL입니다.** `packages.ros.org`에서 내려갔지만
 > `snapshots.ros.org/foxy/final` 아카이브에는 위 deb가 전부 남아 있습니다.
@@ -317,34 +319,42 @@ cd ~/unitree_rl_mjlab/ros2
 source /opt/ros/foxy/setup.bash
 
 colcon build \
-    --packages-skip rmw_cyclonedds_cpp \
+    --packages-skip rmw_cyclonedds_cpp cyclonedds \
     --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ```
 
 **세 가지를 반드시 지켜야 합니다:**
 
-1. **`--packages-skip rmw_cyclonedds_cpp`** — 빼면 빌드가 실패합니다 (A-2의
-   설명). Foxy에서는 이 패키지만 deb를 씁니다.
+1. **`--packages-skip rmw_cyclonedds_cpp cyclonedds`** — 빼면 빌드가
+   실패합니다. `rmw_cyclonedds_cpp`는 Foxy에서 deb를 씁니다 (A-2의 설명).
+   `cyclonedds`는 Computer 2의 `~/cyclonedds_ws` underlay가 **동일한 핀
+   버전 0.10.2**를 이미 제공하므로 워크스페이스에서 다시 빌드하지 않습니다.
+   빌드를 시도하면 코드 생성 단계의 `idlc`가 LD_LIBRARY_PATH에 있는
+   `/opt/ros/foxy`의 CycloneDDS **0.7** `libddsc`를 먼저 로드해서
+   `undefined symbol: DDS_XTypes_TypeObject_desc`로 죽습니다
+   (2026-08-07 Computer 2에서 실측).
 2. **`--merge-install`을 쓰지 않습니다.** Foxy에서 실제로 검증된 레이아웃은
    기본(isolated) 레이아웃입니다. (Humble 개발 머신의 `ros2/README.md`
    명령에는 `--merge-install`이 있는데, 그건 개발 머신 쪽 규약입니다.)
 3. **다른 워크스페이스를 source한 상태로 빌드하지 마십시오.** colcon이 그걸
    underlay로 체인해서, 그 경로가 없는 환경에서 조용히 깨집니다.
-   `/opt/ros/foxy/setup.bash`만 source된 상태여야 합니다.
+   **예외는 `~/cyclonedds_ws` 하나뿐입니다** — Computer 2의 `~/.bashrc`가
+   이를 source하며, 위 1의 `cyclonedds` 스킵이 바로 이 underlay를 전제로
+   합니다.
 
 **소요 시간**: 온보드 PC에서 **40–90분**. 메모리가 부족해 죽으면
 `--parallel-workers 2`를 추가하십시오.
 
 정상 종료 시 마지막 줄:
 ```
-Summary: 19 packages finished [xx min yy s]
+Summary: 18 packages finished [xx min yy s]
 ```
 
-빌드되는 19개 패키지:
+빌드되는 18개 패키지 (`cyclonedds`는 underlay에서 오므로 목록에 없습니다):
 
 ```
-cyclonedds                      unitree_sdk2               unitree_dds_wrapper_vendor
-livox_sdk2_vendor               livox_ros_driver2          direct_lidar_inertial_odometry
+unitree_sdk2                    unitree_dds_wrapper_vendor livox_sdk2_vendor
+livox_ros_driver2               direct_lidar_inertial_odometry
 pcl_ros                         pointcloud_to_laserscan    obstacle_detector
 safety_obstacle_filter          g1_perception_utils        g1_description
 g1_perception_bringup           dpcbf_viz_msgs             dpcbf_ros_adapter
@@ -1077,21 +1087,31 @@ cd ~/unitree_rl_mjlab/ros2
 ./setup_external.sh
 ```
 
-## B-4. 빌드 — **6개 패키지만**
+## B-4. 빌드 — **11개 패키지**
 
 **실행 위치: `~/unitree_rl_mjlab/ros2`**
 
-Computer 3에는 perception도 DLIO도 livox도 필요 없습니다. 아래 6개가
-**검증된 최소 집합**입니다.
+Computer 3에는 perception도 DLIO도 livox도 필요 없습니다. 아래 11개가
+**최소 집합**입니다 (`g1_perception_bringup`이 exec_depend로
+`g1_perception_utils`/`sim_mjlidar_bridge`/`g1_description`을 요구하고,
+그것들이 다시 `dpcbf_ros_adapter`/`sim_msgs`를 끌어옵니다 — 6개만 선택하면
+colcon이 `install/share/<pkg>/package.sh`가 없다며 bringup에서 실패합니다.
+2026-08-07 실측).
 
 ```bash
+# B-2 목록에 없는 추가 의존성 (g1_perception_utils가 요구)
+sudo apt-get install -y libyaml-cpp-dev ros-humble-diagnostic-msgs
+
 cd ~/unitree_rl_mjlab/ros2
 
 source /opt/ros/humble/setup.bash          # ★ 다른 워크스페이스는 source 금지
 
 colcon build --merge-install --packages-select \
     cyclonedds rmw_cyclonedds_cpp obstacle_detector \
-    dpcbf_viz_msgs dpcbf_plot_client g1_perception_bringup
+    dpcbf_viz_msgs dpcbf_plot_client \
+    sim_msgs g1_description dpcbf_ros_adapter \
+    sim_mjlidar_bridge g1_perception_utils \
+    g1_perception_bringup
 ```
 
 | 패키지 | 없으면 |
@@ -1101,6 +1121,7 @@ colcon build --merge-install --packages-select \
 | `dpcbf_viz_msgs` | `/dpcbf/plot` 메시지 타입 |
 | `dpcbf_plot_client` | 클라이언트 본체 |
 | `g1_perception_bringup` | CycloneDDS XML + `viz_env_computer3.sh` |
+| 나머지 5개 (`sim_msgs`, `g1_description`, `dpcbf_ros_adapter`, `sim_mjlidar_bridge`, `g1_perception_utils`) | bringup의 워크스페이스 의존성 — 없으면 bringup 빌드 자체가 실패합니다. 전부 경량입니다 |
 
 > **빌드 전에 다른 워크스페이스를 source하지 마십시오.** colcon이 그것을
 > underlay로 **체인**해서, 그 경로가 없는 환경에서 조용히 깨집니다.
@@ -1111,7 +1132,7 @@ colcon build --merge-install --packages-select \
 
 정상 종료:
 ```
-Summary: 6 packages finished [x min]
+Summary: 11 packages finished [x min]
 ```
 
 검증:
@@ -1266,7 +1287,7 @@ ros2 topic echo /obstacles_safe --once
 
 | # | 방법 | 명령 |
 |---|---|---|
-| **1** | **Computer 2에서 GUI를 직접 띄우고 화면만 전달** — 가장 확실합니다. `dpcbf_plot_client`는 Foxy에서도 빌드되어 있습니다 (A-5의 19개에 포함) | Computer 3에서 `ssh -X <user>@<onboard>` 후, Computer 2에서 env 블록 + `ros2 launch dpcbf_plot_client dpcbf_plot_client.launch.py backend:=matplotlib`. A-2의 선택 apt 필요 |
+| **1** | **Computer 2에서 GUI를 직접 띄우고 화면만 전달** — 가장 확실합니다. `dpcbf_plot_client`는 Foxy에서도 빌드되어 있습니다 (A-5의 18개에 포함) | Computer 3에서 `ssh -X <user>@<onboard>` 후, Computer 2에서 env 블록 + `ros2 launch dpcbf_plot_client dpcbf_plot_client.launch.py backend:=matplotlib`. A-2의 선택 apt 필요 |
 | **2** | **콘솔 read-out으로 대체** — GUI 없이 SSH 콘솔에서 장애물 표를 봅니다 | Computer 2에서 `ros2 run g1_perception_bringup hw_obstacle_watch.py` |
 | **3** | **bag 녹화 후 노트북에서 재생** — 실시간은 포기, 데이터는 확보 | Computer 2에서 A-12①의 녹화 명령 → `scp`로 노트북에 복사 → Computer 3에서 `ros2 bag play <bag>` + 플롯 클라이언트 |
 
@@ -1714,7 +1735,7 @@ NIC 선택)는 여전히 현장에서 C-1/C-3로 판정해야 합니다 — 그�
 | `g1_hw_preflight.sh`를 `ros2 run`으로 실행 | §4 = `install-only machine`, §7 = **오탐 FAIL** |
 | `g1_hw_preflight.sh`를 **소스 트리 경로**로 실행 | §4 `ok`, §7 `T7-hw: PASS` → A-10 |
 | `hw_config_check.py`를 실제 로컬 IP로 채운 JSON에 실행 | **`hw_config_check: PASS`, EXIT 0** |
-| `install_foxy`에 19개 패키지 전부 존재 | ✅ |
+| `install_foxy`에 19개 패키지 전부 존재 | ✅ (당시 레이아웃. 2026-08-07부터 워크스페이스는 18개 + underlay `cyclonedds` — A-5) |
 | `g1_perception_bringup` 설치 실행파일 13개 | ✅ |
 | `xacro`가 Foxy에서 `g1_mid360.xacro`를 처리 | ✅ (실패는 preflight의 경로 문제였음) |
 | `viz_env_computer{2,3}.sh`가 isolated/merged 양쪽 레이아웃에서 XML을 찾음 | ✅ |
