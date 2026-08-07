@@ -1,0 +1,30 @@
+F-1 (Foxy portability): pick the typesupport idiom by capability, not by name.
+
+Upstream branches on `DISTRO_ROS STREQUAL "humble" OR "jazzy"` to choose
+between rosidl_get_typesupport_target() (Galactic+) and the older
+add_dependencies + get_target_property form. colcon.pkg (patch 0005) carries
+one fixed -DDISTRO_ROS value, but this tree is built on BOTH Humble and Foxy —
+the G1's onboard computer runs Foxy — so on Foxy the humble value selects a
+branch calling a macro that does not exist there.
+
+Gating on `if(COMMAND rosidl_get_typesupport_target)` picks the same branch
+upstream intended on every distro, and makes DISTRO_ROS irrelevant to this
+decision. The else() branch is upstream's own, unchanged.
+
+Applies on top of patches 0005 + 0008.
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -282,7 +282,12 @@
+   target_include_directories(${PROJECT_NAME} PRIVATE ${livox_sdk_INCLUDE_DIRS})
+ 
+   # get include directories of custom msg headers
+-  if(DISTRO_ROS STREQUAL "humble" OR DISTRO_ROS STREQUAL "jazzy")
++  # Gate on the command, not on the DISTRO_ROS string: colcon.pkg carries one
++  # fixed -DDISTRO_ROS value but this tree is built on both Humble and Foxy
++  # (the G1's onboard PC), and `humble` there would take a branch calling a
++  # macro Foxy does not define. rosidl_get_typesupport_target() is Galactic+;
++  # the else() branch below is the pre-Galactic equivalent.
++  if(COMMAND rosidl_get_typesupport_target)
+     rosidl_get_typesupport_target(cpp_typesupport_target
+     ${LIVOX_INTERFACES} "rosidl_typesupport_cpp")
+     target_link_libraries(${PROJECT_NAME} "${cpp_typesupport_target}")

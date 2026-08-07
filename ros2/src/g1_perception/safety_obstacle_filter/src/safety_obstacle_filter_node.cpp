@@ -35,8 +35,12 @@ class SafetyObstacleFilterNode : public rclcpp::Node {
         "obstacles_safe", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
     sub_ = create_subscription<obstacle_detector::msg::Obstacles>(
         "tracked_obstacles", rclcpp::QoS(rclcpp::KeepLast(5)).reliable(),
-        [this](const obstacle_detector::msg::Obstacles& msg) {
-          pub_->publish(Apply(msg, params_, now().seconds(), &stats_));
+        // ConstSharedPtr, not `const Msg&`: rclcpp only accepts const-reference
+        // subscription callbacks from Galactic on, and the G1's onboard
+        // computer runs Foxy. Apply() still takes the message by const
+        // reference — nothing about the filtering changes.
+        [this](obstacle_detector::msg::Obstacles::ConstSharedPtr msg) {
+          pub_->publish(Apply(*msg, params_, now().seconds(), &stats_));
           ReportStats();
         });
     RCLCPP_INFO(get_logger(),

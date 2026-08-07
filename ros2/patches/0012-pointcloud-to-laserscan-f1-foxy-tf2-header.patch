@@ -1,0 +1,44 @@
+F-1 (Foxy portability): tf2_sensor_msgs header spelling.
+
+The G1's onboard computer runs ROS 2 Foxy (Ubuntu 20.04) while this workspace
+is developed on Humble. Foxy ships tf2_sensor_msgs as `.h`; the `.hpp` spelling
+arrived in Galactic. Same header, same doTransform specialisation — selected
+with __has_include so the file builds on both.
+
+No behaviour change.
+diff --git a/src/laserscan_to_pointcloud_node.cpp b/src/laserscan_to_pointcloud_node.cpp
+index 2d2726f..bf45026 100644
+--- a/src/laserscan_to_pointcloud_node.cpp
++++ b/src/laserscan_to_pointcloud_node.cpp
+@@ -49,7 +49,13 @@
+ #include <utility>
+ 
+ #include "sensor_msgs/point_cloud2_iterator.hpp"
++// Foxy ships tf2_sensor_msgs as .h; the .hpp spelling arrived in
++// Galactic. Same header, same doTransform specialisations.
++#if __has_include("tf2_sensor_msgs/tf2_sensor_msgs.hpp")
+ #include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
++#else
++#include "tf2_sensor_msgs/tf2_sensor_msgs.h"
++#endif
+ #include "tf2_ros/create_timer_ros.h"
+ 
+ namespace pointcloud_to_laserscan
+diff --git a/src/pointcloud_to_laserscan_node.cpp b/src/pointcloud_to_laserscan_node.cpp
+index ca0039f..d8cfcf5 100644
+--- a/src/pointcloud_to_laserscan_node.cpp
++++ b/src/pointcloud_to_laserscan_node.cpp
+@@ -49,7 +49,13 @@
+ #include <utility>
+ 
+ #include "sensor_msgs/point_cloud2_iterator.hpp"
++// Foxy ships tf2_sensor_msgs as .h; the .hpp spelling arrived in
++// Galactic. Same header, same doTransform specialisations.
++#if __has_include("tf2_sensor_msgs/tf2_sensor_msgs.hpp")
+ #include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
++#else
++#include "tf2_sensor_msgs/tf2_sensor_msgs.h"
++#endif
+ #include "tf2_ros/create_timer_ros.h"
+ 
+ namespace pointcloud_to_laserscan

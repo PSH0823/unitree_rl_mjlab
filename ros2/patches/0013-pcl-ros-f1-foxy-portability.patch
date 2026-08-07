@@ -1,0 +1,157 @@
+F-1 (Foxy portability): build pcl_ros on Foxy as well as Humble.
+
+The G1's onboard computer runs ROS 2 Foxy (Ubuntu 20.04). Three unrelated
+Foxy/Humble differences, none of which change what any filter computes:
+
+1. tf2_geometry_msgs is `.h` on Foxy, `.hpp` from Galactic (transforms.hpp and
+   transforms.cpp). Selected with __has_include.
+
+2. pcd_to_pointcloud used two rclcpp 16 (Humble) APIs. declare_parameter<T>(name)
+   with no default becomes the with-default form — an unsupplied file_name then
+   lands in the `== ""` branch that already logs and throws, so the failure is
+   raised by the tool instead of by rclcpp. NodeTopicsInterface::resolve_topic_name()
+   falls back to rclcpp::expand_topic_or_service_name(), whose result is only
+   ever printed in the adjacent log line.
+
+3. project_inliers declared its mandatory `model_type` by TYPE with no default,
+   also rclcpp 16. Foxy's equivalent leaves the parameter PARAMETER_NOT_SET;
+   either way the get_parameter() on the next line returns false when no
+   override was given, which is the "mandatory parameter missing" path the code
+   already handles.
+
+Applies on top of patch 0002 (which touches only filters/filter.cpp).
+--- a/pcl_ros/include/pcl_ros/impl/transforms.hpp
++++ b/pcl_ros/include/pcl_ros/impl/transforms.hpp
+@@ -51,7 +51,13 @@
+ #include <Eigen/Geometry>
+ #include <string>
+ 
++// Foxy ships tf2_geometry_msgs as .h; the .hpp spelling arrived in
++// Galactic. Same header.
++#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
+ #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
++#else
++#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
++#endif
+ #include <geometry_msgs/msg/transform_stamped.hpp>
+ #include <rclcpp/logging.hpp>
+ #include <rclcpp/time.hpp>
+--- a/pcl_ros/src/transforms.cpp
++++ b/pcl_ros/src/transforms.cpp
+@@ -52,7 +52,13 @@
+ #include <limits>
+ #include <string>
+ 
++// Foxy ships tf2_geometry_msgs as .h; the .hpp spelling arrived in
++// Galactic. Same header.
++#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
+ #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
++#else
++#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
++#endif
+ #include <sensor_msgs/msg/point_cloud2.hpp>
+ #include <geometry_msgs/msg/transform_stamped.hpp>
+ #include <rclcpp/logging.hpp>
+--- a/pcl_ros/tools/pcd_to_pointcloud.cpp
++++ b/pcl_ros/tools/pcd_to_pointcloud.cpp
+@@ -53,9 +53,26 @@
+ #include <thread>
+ 
+ #include <rclcpp/rclcpp.hpp>
++#include <rclcpp/expand_topic_or_service_name.hpp>
+ #include "rclcpp_components/register_node_macro.hpp"
+ #include <sensor_msgs/msg/point_cloud2.hpp>
+ 
++// This file builds on both Humble and Foxy (the G1's onboard distro). Foxy has
++// no rclcpp/version.h, which is itself the discriminator: the two rclcpp APIs
++// used below both arrived with rclcpp 16 (Humble).
++#if __has_include(<rclcpp/version.h>)
++#include <rclcpp/version.h>
++#endif
++#ifdef RCLCPP_VERSION_GTE
++#  if RCLCPP_VERSION_GTE(16, 0, 0)
++#    define PCL_ROS_HAS_RESOLVE_TOPIC_NAME 1
++#  else
++#    define PCL_ROS_HAS_RESOLVE_TOPIC_NAME 0
++#  endif
++#else
++#  define PCL_ROS_HAS_RESOLVE_TOPIC_NAME 0
++#endif
++
+ namespace pcl_ros
+ {
+ class PCDPublisher : public rclcpp::Node
+@@ -82,7 +99,12 @@
+     cloud_topic_ = "cloud_pcd";
+     tf_frame_ = this->declare_parameter("tf_frame", tf_frame_);
+     period_ms_ = this->declare_parameter("publishing_period_ms", 3000);
+-    file_name_ = this->declare_parameter<std::string>("file_name");
++    // declare_parameter<T>(name) with NO default is Humble+; Foxy (the G1's
++    // onboard distro) has only the with-default form. An empty default lands
++    // an unsupplied file_name in the `== ""` branch immediately below, which
++    // already logs and throws — the same outcome, raised by this tool instead
++    // of by rclcpp.
++    file_name_ = this->declare_parameter<std::string>("file_name", std::string{});
+ 
+     if (file_name_ == "" || pcl::io::loadPCDFile(file_name_, cloud_) == -1) {
+       RCLCPP_ERROR(this->get_logger(), "failed to open PCD file");
+@@ -92,8 +114,18 @@
+     int nr_points = cloud_.width * cloud_.height;
+ 
+     auto fields_list = pcl::getFieldsList(cloud_);
++    // NodeTopicsInterface::resolve_topic_name() is Humble+ (rclcpp 16); Foxy,
++    // which the G1's onboard computer runs, has only the free function that
++    // backs it. Both return the fully qualified topic and the value is only
++    // ever printed in the log below. PCL_ROS_HAS_RESOLVE_TOPIC_NAME is set at
++    // the top of this file.
++#if PCL_ROS_HAS_RESOLVE_TOPIC_NAME
+     auto resolved_cloud_topic =
+       this->get_node_topics_interface()->resolve_topic_name(cloud_topic_);
++#else
++    auto resolved_cloud_topic = rclcpp::expand_topic_or_service_name(
++      cloud_topic_, this->get_name(), this->get_namespace());
++#endif
+ 
+     pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(cloud_topic_, 10);
+     timer_ = this->create_wall_timer(
+--- a/pcl_ros/src/pcl_ros/filters/project_inliers.cpp
++++ b/pcl_ros/src/pcl_ros/filters/project_inliers.cpp
+@@ -37,13 +37,38 @@
+ 
+ #include "pcl_ros/filters/project_inliers.hpp"
+ 
++// This file builds on both Humble and Foxy (the G1's onboard distro). Foxy has
++// no rclcpp/version.h, which is itself the discriminator: declaring a
++// parameter by type with no default arrived with rclcpp 16 (Humble).
++#if __has_include(<rclcpp/version.h>)
++#include <rclcpp/version.h>
++#endif
++#ifdef RCLCPP_VERSION_GTE
++#  if RCLCPP_VERSION_GTE(16, 0, 0)
++#    define PCL_ROS_HAS_TYPED_PARAM_DECL 1
++#  else
++#    define PCL_ROS_HAS_TYPED_PARAM_DECL 0
++#  endif
++#else
++#  define PCL_ROS_HAS_TYPED_PARAM_DECL 0
++#endif
++
+ //////////////////////////////////////////////////////////////////////////////////////////////
+ pcl_ros::ProjectInliers::ProjectInliers(const rclcpp::NodeOptions & options)
+ : Filter("ProjectInliersNode", options), model_()
+ {
+   // ---[ Mandatory parameters
+   // The type of model to use (user given parameter).
++  // Declare by TYPE with no default. That overload is rclcpp 16 (Humble); on
++  // Foxy — the G1's onboard distro — the equivalent is declare_parameter(name),
++  // which leaves the parameter PARAMETER_NOT_SET. Both make the get_parameter()
++  // immediately below return false when no override was supplied, which is the
++  // "mandatory parameter missing" path this code already handles.
++#if PCL_ROS_HAS_TYPED_PARAM_DECL
+   declare_parameter("model_type", rclcpp::ParameterType::PARAMETER_INTEGER);
++#else
++  declare_parameter("model_type");
++#endif
+   int model_type;
+   if (!get_parameter("model_type", model_type)) {
+     RCLCPP_ERROR(

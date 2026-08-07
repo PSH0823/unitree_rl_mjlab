@@ -185,6 +185,8 @@ def code_only(path):
     grep would fail the gate on its own documentation, which would teach the
     next person to delete the documentation.
     """
+    if not hasattr(ast, 'unparse'):
+        return _code_only_tokenize(path)
     tree = ast.parse(open(path).read())
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Module, ast.FunctionDef,
@@ -196,6 +198,33 @@ def code_only(path):
                 and isinstance(body[0].value.value, str)):
             node.body = body[1:] or [ast.Pass()]
     return ast.unparse(ast.fix_missing_locations(tree))
+
+
+def _code_only_tokenize(path):
+    """code_only() for Python 3.8 — the G1's onboard computer runs Foxy.
+
+    ast.unparse() is 3.9+. This drops the same two things by tokenising:
+    COMMENT tokens, and STRING tokens standing alone as a statement (module,
+    class and function docstrings, and any bare string expression). The result
+    is one token per line rather than reconstructed source, which is enough
+    because callers only substring-search it and every name and string literal
+    survives inside a single token.
+    """
+    import tokenize
+    keep, statement_start = [], True
+    with open(path, 'rb') as fh:
+        for tok in tokenize.tokenize(fh.readline):
+            if tok.type == tokenize.COMMENT:
+                continue
+            if tok.type == tokenize.STRING and statement_start:
+                continue                       # docstring / bare string
+            if tok.type in (tokenize.NEWLINE, tokenize.NL, tokenize.INDENT,
+                            tokenize.DEDENT, tokenize.ENCODING):
+                statement_start = True
+                continue
+            keep.append(tok.string)
+            statement_start = False
+    return '\n'.join(keep)
 
 
 def test_launch_isolation():

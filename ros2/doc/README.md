@@ -5,6 +5,14 @@
 안 되면 무엇부터 보는지를 한 곳에 모았습니다. 세부 절차는 각 문서로
 링크하며 여기서 반복하지 않습니다(§8 문서 인덱스).
 
+> **처음부터 세팅하는 경우 — 컴퓨터 2대(Mid-360 직결) 구성:**
+> **[`g1_two_computer_setup.md`](g1_two_computer_setup.md)**
+> `git clone`부터 apt·빌드·LiDAR IP 탐색·`MID360_config.json` 작성·
+> CycloneDDS 연결·실시간 시각화까지 end-to-end 전체 절차입니다.
+> 이 파일(3대 구성, `driver:=off`, 워크스페이스 빌드 완료 전제)과 달리
+> **Mid-360을 Computer 2에 직접 물리는 2대 구성(`driver:=on`)** 이며
+> 빌드 전 상태에서 시작합니다.
+
 ---
 
 ## 0. 한 장 요약
@@ -124,6 +132,32 @@ actuation 경로가 구조적으로 없고, `hw_offline_gates`가 매 빌드 이
 ## 3. 전날 준비 (한 번만)
 
 ### Computer 2
+
+> **⚠ Computer 2는 ROS 2 Foxy(Ubuntu 20.04)입니다** — Computer 3(노트북)과
+> 개발 머신은 Humble입니다. **워크스페이스 19개 패키지 전부가 Foxy·Humble
+> 양쪽에서 빌드**되고(`ros2/tools/foxy_docker.sh build all`, patch 0011–0015),
+> C++ 유닛테스트, `hw_offline_gates` 283개 항목(5개 hardware launch가 Foxy
+> launch에서 construct되는 것 포함), T10 DDS 공존 게이트가 Foxy에서 PASS합니다.
+>
+> **Foxy에서 다른 점 한 가지 — CycloneDDS.** Foxy에서는 ROS 미들웨어만
+> 배포판 deb(`ros-foxy-rmw-cyclonedds-cpp` 0.7.11)를 씁니다. 소스 조합이
+> 존재하지 않기 때문입니다(자세한 이유는 [`../README.md`](../README.md)).
+> 런타임에는 그 deb가 unitree_sdk2의 CycloneDDS **0.10.2**를 로드해서
+> 정상 동작하며 T10이 이를 확인합니다. 깨지는 건 컴파일 타임 include
+> 순서뿐이고, unitree_sdk2와 rclcpp를 한 프로세스에 링크하는 코드는
+> unitree의 헤더를 먼저 보게 해야 합니다.
+>
+> **Foxy↔Humble DDS interop — 검증 완료(2026-08-07).** focal 컨테이너를
+> `--network host`로 띄워 호스트 Humble 워크스페이스와 붙인 실측: Computer 3이
+> 구독하는 **4개 토픽 전부**가 **양방향·손실 0**으로 전달됩니다
+> (`/odom` 1500/1500 @99.99 Hz, `/obstacles_safe` @10.00, `/dpcbf/plot` @30.00),
+> multicast·static peers 두 모드 모두. 커스텀 메시지는 필드 단위로 확인했고
+> (`CircleObstacle.covariance`, 중첩 `PlotObstacle[]` 포함) 실제
+> `dpcbf_plot_client.data_hub`가 라이브로 렌더링합니다. 다만 검증은
+> loopback이므로 **실제 두 대 사이의 물리 망**(Wi-Fi multicast, 방화벽)은
+> 현장 변수로 남습니다. 상세:
+> [`g1_two_computer_setup.md`](g1_two_computer_setup.md) 부록 1.
+
 워크스페이스는 이미 빌드되어 있다고 가정. `~/.g1_viz_env`만 만듭니다.
 
 ```bash
@@ -286,6 +320,7 @@ Computer 3 화면: 좌상단 배너의 `dpcbf/plot` / `odom` / `obstacles_safe` 
 
 | 상황 | 문서 |
 |---|---|
+| **아무것도 없는 상태에서 컴퓨터 2대 full 세팅 (clone→빌드→LiDAR IP→시각화)** | [`g1_two_computer_setup.md`](g1_two_computer_setup.md) |
 | 로봇 전원 켜기 전에 알아야 할 것 | [`g1_hardware_preflight.md`](g1_hardware_preflight.md) |
 | 검증된 것 / 검증 안 된 것 구분 | [`g1_hardware_code_audit.md`](g1_hardware_code_audit.md) |
 | **perception 세션 stage별 정확한 절차** | [`g1_first_perception_experiment.md`](g1_first_perception_experiment.md) |

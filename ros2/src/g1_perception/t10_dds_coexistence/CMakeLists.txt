@@ -14,8 +14,22 @@ find_package(unitree_sdk2 REQUIRED)
 # unitree_sdk2's vendored thirdparty).
 find_path(DDSCXX_INCLUDE dds/dds.hpp PATH_SUFFIXES ddscxx REQUIRED)
 
+# The C CycloneDDS headers that ddscxx's TopicTraits/Topic templates expand
+# against (ddsi_sertype, dds_create_topic_sertype, the XCDR representation
+# ids). Located by a 0.10-only header ON PURPOSE.
+#
+# On Foxy this is the difference between building and not. Foxy's middleware
+# is the ros-foxy-rmw-cyclonedds-cpp deb, which drags ros-foxy-cyclonedds 0.7
+# headers into /opt/ros/foxy/include; 0.7 predates ddsi_sertype and the
+# templates fail to instantiate. unitree_sdk2 installs its own 0.10.2 copy,
+# and this target must see THAT one first — hence BEFORE, which also outranks
+# the ament dependency includes (added as -isystem, i.e. searched last).
+# Harmless on Humble, where every CycloneDDS in the prefix is already 0.10.2.
+find_path(CYCLONEDDS_C_INCLUDE dds/ddsi/ddsi_sertype.h REQUIRED)
+
 add_executable(t10_smoke src/t10_smoke.cpp)
-target_include_directories(t10_smoke PRIVATE ${DDSCXX_INCLUDE})
+target_include_directories(t10_smoke BEFORE PRIVATE
+  ${CYCLONEDDS_C_INCLUDE} ${DDSCXX_INCLUDE})
 target_link_libraries(t10_smoke unitree_sdk2)
 ament_target_dependencies(t10_smoke rclcpp std_msgs)
 

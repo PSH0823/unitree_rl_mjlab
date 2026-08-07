@@ -6,6 +6,8 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstring>   // std::memcmp — pulled in transitively by libstdc++ 11
+                     // (Humble), but not by libstdc++ 9 (Foxy/focal).
 #include <thread>
 
 #include <obstacle_detector/msg/obstacles.hpp>
@@ -63,9 +65,6 @@ bool PublishUntilReceived(Pub& pub, dra::ObstacleSource& src,
 
 class ObstacleSourceTest : public ::testing::Test {
  protected:
-  static void SetUpTestSuite() {
-    if (!rclcpp::ok()) rclcpp::init(0, nullptr);
-  }
   void SetUp() override {
     pub_node_ = rclcpp::Node::make_shared("test_obstacles_pub");
     pub_ = pub_node_->create_publisher<obstacle_detector::msg::Obstacles>(
@@ -217,6 +216,11 @@ TEST_F(ObstacleSourceTest, ConstructionEnforcesModeInvariants) {
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
+  // rclcpp is initialised HERE rather than in a SetUpTestSuite() fixture hook:
+  // Foxy vendors googletest 1.8, which knows only the older SetUpTestCase()
+  // name and would silently never call the hook, leaving every SetUp() to
+  // build a Node against a null context. main() runs on every gtest version.
+  if (!rclcpp::ok()) rclcpp::init(0, nullptr);
   const int ret = RUN_ALL_TESTS();
   if (rclcpp::ok()) rclcpp::shutdown();
   return ret;

@@ -1,9 +1,12 @@
 # External sources are pinned in deps.repos and imported with vcstool — never committed.
 src/external/
-# colcon artifacts (incl. per-arch out dirs: build_arm64/, install_arm64/)
+# colcon artifacts (incl. per-arch out dirs: build_arm64/, install_arm64/,
+# and the Foxy container's build_foxy/ install_foxy/ log_foxy/)
 build*/
 install*/
 log/
+log_foxy/
+.colcon_foxy/
 # bags are big — regenerate per test_fixtures/README.md; the wall_scene
 # fixture (generator + README, outputs go to /tmp) IS committed (Phase 2)
 test_fixtures/*

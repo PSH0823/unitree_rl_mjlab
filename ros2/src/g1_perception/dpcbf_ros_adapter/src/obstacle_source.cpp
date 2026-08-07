@@ -300,8 +300,13 @@ ObstacleSource::ObstacleSource(Config config) : impl_(new Impl) {
     impl_->sub =
         impl_->node->create_subscription<obstacle_detector::msg::Obstacles>(
             cfg.topic, rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
-            [impl = impl_.get()](const obstacle_detector::msg::Obstacles& m) {
-              impl->OnObstacles(m);
+            // ConstSharedPtr, not `const Obstacles&`: rclcpp accepts
+            // const-reference subscription callbacks only from Galactic on,
+            // and the G1's onboard computer runs Foxy. Delivery, QoS and
+            // OnObstacles() itself are unchanged.
+            [impl = impl_.get()](
+                obstacle_detector::msg::Obstacles::ConstSharedPtr m) {
+              impl->OnObstacles(*m);
             });
   }
   impl_->diag_timer = impl_->node->create_wall_timer(

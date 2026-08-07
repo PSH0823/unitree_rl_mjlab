@@ -1,0 +1,425 @@
+F-1 (Foxy portability): build the fork on ROS 2 Foxy as well as Humble.
+
+The G1's onboard computer runs Foxy (Ubuntu 20.04); this workspace was
+written on Humble (Ubuntu 22.04) and the simulator stays there. Nothing in
+this patch changes what the extractor, tracker or publisher COMPUTE — every
+hunk is a spelling that Foxy's rclcpp/tf2/rosidl accept and Humble's still
+accept. Verified by building the same tree under both distros (Foxy in the
+focal container of ros2/docker/foxy, Humble natively).
+
+The four incompatibilities, in the order the compiler found them:
+
+1. CMake. `rosidl_get_typesupport_target()` is Galactic+. Foxy's equivalent
+   is `rosidl_target_interfaces()`. Selected with `if(COMMAND ...)` so the
+   file works on either, rather than being pinned to one distro.
+
+2. tf2_geometry_msgs. Foxy ships `tf2_geometry_msgs.h`; the `.hpp` spelling
+   arrived in Galactic. Selected with `__has_include`. Separately, Foxy
+   specializes `doTransform` only for the *Stamped* message types — there is
+   no unstamped `Pose` overload, which is what `transformPoint()` called, so
+   the shared library built and the executable failed to link. Rewritten to
+   the `PoseStamped` form, which exists on both distros and which Humble
+   implements by forwarding to the unstamped one: same arithmetic, same
+   returned position.
+
+3. Parameters. `declare_parameter(name, rclcpp::ParameterType)` — declare by
+   type with no default — arrived with rclcpp 16 (Humble). Foxy expresses
+   the same intent as `declare_parameter(name)`, which leaves the parameter
+   PARAMETER_NOT_SET. Both leave it unset when no override is supplied,
+   which is exactly what the `get_parameter_or(name, out, default)` calls
+   that follow every declaration rely on. Routed through
+   `obstacle_detector::declare_parameter_typed()` in the new
+   utilities/rclcpp_compat.h so the 46 call sites read the same on both.
+
+4. Subscription callbacks. rclcpp accepts `const MessageT&` callbacks only
+   from Galactic on, and Foxy's subscription traits do not deduce the
+   message type through a `const ConstSharedPtr&` parameter either. The
+   subscriptions now pass a ConstSharedPtr-by-value lambda that forwards to
+   the existing callback — scanCallback(), pclCallback(), odomCallback() and
+   obstaclesCallback() keep their signatures and their bodies verbatim.
+
+Applies on top of patches 0003 + 0004 + 0007 + 0009 + 0010 AND the
+A-mode `loop_rate` revival that currently lives only in the working tree
+(obstacle_tracker.{h,cpp}, uncommitted, no patch of its own — it reactivates
+what 0010 retired, for the rate-comparison experiment). Verified by
+reconstructing the pre-image of the five touched files, applying this patch,
+and diffing the result against the working tree: identical. On a bare
+0003..0010 stack the two obstacle_tracker.cpp hunks will need re-anchoring —
+that drift predates this patch.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -35,6 +35,21 @@
+   DEPENDENCIES geometry_msgs std_msgs builtin_interfaces 
+ )
+ 
++# Link a target against this package's OWN generated messages, on both Foxy
++# and Humble. rosidl_get_typesupport_target() does not exist before Galactic;
++# Foxy's equivalent is rosidl_target_interfaces(), which resolves and links the
++# generated typesupport into the target directly. Same libraries either way —
++# only the CMake spelling differs.
++function(obstacle_detector_link_own_messages target)
++  if(COMMAND rosidl_get_typesupport_target)
++    rosidl_get_typesupport_target(cpp_typesupport_target
++      "${PROJECT_NAME}" "rosidl_typesupport_cpp")
++    target_link_libraries(${target} "${cpp_typesupport_target}")
++  else()
++    rosidl_target_interfaces(${target} ${PROJECT_NAME} "rosidl_typesupport_cpp")
++  endif()
++endfunction()
++
+ set(PROJECT_INCLUDE_DIRS include)
+ set(PROJECT_DEPENDS "rclcpp" "std_msgs" "nav_msgs" "std_srvs" "visualization_msgs" "geometry_msgs" "sensor_msgs" "tf2" "tf2_geometry_msgs" "tf2_ros" "laser_geometry" "rosidl_default_generators")
+ 
+@@ -46,22 +61,19 @@
+ target_link_libraries(obstacle_extractor ${ARMADILLO_LIBRARIES})
+ ament_target_dependencies(obstacle_extractor ${PROJECT_DEPENDS})
+ # allow the project to link against its own messages
+-rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
+-target_link_libraries(obstacle_extractor "${cpp_typesupport_target}")
++obstacle_detector_link_own_messages(obstacle_extractor)
+ 
+ add_library(obstacle_tracker src/obstacle_tracker.cpp)
+ target_link_libraries(obstacle_tracker ${ARMADILLO_LIBRARIES})
+ ament_target_dependencies(obstacle_tracker ${PROJECT_DEPENDS})
+ # allow the project to link against its own messages
+-rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
+-target_link_libraries(obstacle_tracker "${cpp_typesupport_target}")
++obstacle_detector_link_own_messages(obstacle_tracker)
+ 
+ add_library(obstacle_publisher src/obstacle_publisher.cpp)
+ target_link_libraries(obstacle_publisher ${ARMADILLO_LIBRARIES})
+ ament_target_dependencies(obstacle_publisher ${PROJECT_DEPENDS})
+ # allow the project to link against its own messages
+-rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
+-target_link_libraries(obstacle_publisher "${cpp_typesupport_target}")
++obstacle_detector_link_own_messages(obstacle_publisher)
+ 
+ #
+ # Build nodes
+--- a/include/obstacle_detector/utilities/math_utilities.h
++++ b/include/obstacle_detector/utilities/math_utilities.h
+@@ -37,10 +37,17 @@
+ 
+ #include "geometry_msgs/msg/point.hpp"
+ #include "geometry_msgs/msg/pose.hpp"
++#include "geometry_msgs/msg/pose_stamped.hpp"
+ #include "geometry_msgs/msg/point32.hpp"
+ #include "tf2/convert.h"
+ #include "tf2/exceptions.h"
++// tf2_geometry_msgs got its .hpp spelling in Galactic; Foxy ships only the .h.
++// Same header content — the conversions used below are identical.
++#if __has_include("tf2_geometry_msgs/tf2_geometry_msgs.hpp")
+ #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
++#else
++#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
++#endif
+ 
+ #include "obstacle_detector/utilities/point.h"
+ 
+@@ -98,12 +105,17 @@
+ }
+ 
+ inline Point transformPoint(const Point& point, const geometry_msgs::msg::TransformStamped& transform) {
+-  geometry_msgs::msg::Pose pose;
+-  pose.position.x = point.x;
+-  pose.position.y = point.y;
+-  pose.position.z = point.z;
++  // PoseStamped, not Pose: Foxy's tf2_geometry_msgs specializes doTransform
++  // only for the *Stamped* types — the unstamped Pose overload arrived in
++  // Galactic. On Humble the Stamped specialization simply forwards to the
++  // unstamped one, so the transformed position is bit-for-bit the same value
++  // this function returned before; only the wrapper type changed.
++  geometry_msgs::msg::PoseStamped pose;
++  pose.pose.position.x = point.x;
++  pose.pose.position.y = point.y;
++  pose.pose.position.z = point.z;
+   tf2::doTransform(pose, pose, transform);
+-  return {pose.position.x, pose.position.y, 0., pose.position.z};
++  return {pose.pose.position.x, pose.pose.position.y, 0., pose.pose.position.z};
+ }
+ 
+ inline bool checkPointInLimits(const geometry_msgs::msg::Point32& p, double x_min, double x_max, double y_min, double y_max) {
+--- a/src/obstacle_extractor.cpp
++++ b/src/obstacle_extractor.cpp
+@@ -34,6 +34,7 @@
+  */
+ 
+ #include "obstacle_detector/obstacle_extractor.h"
++#include "obstacle_detector/utilities/rclcpp_compat.h"
+ #include "obstacle_detector/utilities/figure_fitting.h"
+ #include "obstacle_detector/utilities/math_utilities.h"
+ 
+@@ -65,29 +66,29 @@
+ 
+ void ObstacleExtractor::updateParamsUtil(){
+   bool prev_active = p_active_;
+-  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("use_scan", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("use_pcl", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("use_pcl2", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("use_split_and_merge", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("circles_from_visibles", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("discard_converted_segments", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("transform_coordinates", rclcpp::PARAMETER_BOOL);
+-
+-  nh_->declare_parameter("min_group_points", rclcpp::PARAMETER_INTEGER);
+-
+-  nh_->declare_parameter("max_group_distance", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("distance_proportion", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_split_distance", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_merge_separation", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_merge_spread", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_circle_radius", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("radius_enlargement", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("min_x_limit", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_x_limit", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("min_y_limit", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_y_limit", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
++  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "use_scan", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "use_pcl", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "use_pcl2", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "use_split_and_merge", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "circles_from_visibles", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "discard_converted_segments", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "transform_coordinates", rclcpp::PARAMETER_BOOL);
++
++  obstacle_detector::declare_parameter_typed(nh_, "min_group_points", rclcpp::PARAMETER_INTEGER);
++
++  obstacle_detector::declare_parameter_typed(nh_, "max_group_distance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "distance_proportion", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_split_distance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_merge_separation", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_merge_spread", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_circle_radius", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "radius_enlargement", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "min_x_limit", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_x_limit", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "min_y_limit", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_y_limit", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
+ 
+   nh_->get_parameter_or("active", p_active_, true);
+   nh_->get_parameter_or("use_scan", p_use_scan_, true);
+@@ -119,12 +120,19 @@
+         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using LaserScan topic");
+         // Sensor-data QoS: laser drivers / projection nodes publish best-effort;
+         // a reliable subscription would never match them.
++        // The callbacks below take `const MessageT&`, a subscription callback
++        // form rclcpp only accepts from Galactic on; Foxy's AnySubscription-
++        // Callback knows only the shared_ptr forms. Subscribe with a
++        // ConstSharedPtr lambda and dereference — identical delivery on both
++        // distros, and the callback bodies stay untouched.
+         scan_sub_ = nh_->create_subscription<sensor_msgs::msg::LaserScan>(
+-            "scan", rclcpp::SensorDataQoS(), std::bind(&ObstacleExtractor::scanCallback, this, std::placeholders::_1));
++            "scan", rclcpp::SensorDataQoS(),
++            [this](sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) { scanCallback(*scan_msg); });
+       }else if (p_use_pcl_){
+         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using PointCloud1 topic");
+         pcl_sub_ = nh_->create_subscription<sensor_msgs::msg::PointCloud>(
+-            "pcl", 10, std::bind(&ObstacleExtractor::pclCallback, this, std::placeholders::_1));
++            "pcl", 10,
++            [this](sensor_msgs::msg::PointCloud::ConstSharedPtr pcl_msg) { pclCallback(*pcl_msg); });
+       }else if (p_use_pcl_2_){
+         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using PointCloud2 topic");
+         pcl2_sub_ = nh_->create_subscription<sensor_msgs::msg::PointCloud2>(
+--- a/src/obstacle_tracker.cpp
++++ b/src/obstacle_tracker.cpp
+@@ -34,6 +34,7 @@
+  */
+ 
+ #include "obstacle_detector/obstacle_tracker.h"
++#include "obstacle_detector/utilities/rclcpp_compat.h"
+ 
+ #include <algorithm>
+ #include <chrono>
+@@ -72,25 +73,25 @@
+ void ObstacleTracker::updateParamsUtil(){
+   bool prev_active = p_active_;
+ 
+-  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("copy_segments", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "copy_segments", rclcpp::PARAMETER_BOOL);
+   // Before using compensate_robot_velocity, consider using pointcloud input from map frame instead of base_link frame
+-  nh_->declare_parameter("compensate_robot_velocity", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("sensor_rate", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "compensate_robot_velocity", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "sensor_rate", rclcpp::PARAMETER_DOUBLE);
+   // loop_rate > 0 revives the upstream fixed-rate scheme (A-mode) for the
+   // rate-comparison experiment: a wall timer at loop_rate clocks
+   // predict+correct (re-using the retained measurement between scans) and
+   // publishes every tick. Absent or 0 keeps the P-2 measurement-driven mode.
+-  nh_->declare_parameter("loop_rate", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
++  obstacle_detector::declare_parameter_typed(nh_, "loop_rate", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
+ 
+-  nh_->declare_parameter("tracking_duration", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("min_correspondence_cost", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("radius_residual_weight", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("std_correspondence_dev", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("process_variance", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("process_rate_variance", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("measurement_variance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "tracking_duration", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "min_correspondence_cost", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "radius_residual_weight", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "std_correspondence_dev", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "process_variance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "process_rate_variance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "measurement_variance", rclcpp::PARAMETER_DOUBLE);
+ 
+   nh_->get_parameter_or("active", p_active_, true);
+   nh_->get_parameter_or("copy_segments", p_copy_segments_, true);
+@@ -149,11 +150,17 @@
+   if (p_active_ != prev_active) {
+     if (p_active_) {
+       if(p_compensate_robot_velocity_){
++        // ConstSharedPtr BY VALUE: Foxy's subscription traits do not deduce the
++        // message type through a `const ConstSharedPtr&` parameter (that form
++        // arrived with Galactic). The callbacks themselves keep their
++        // signatures — only the delivery spelling changes.
+         odom_sub_ = nh_->create_subscription<nav_msgs::msg::Odometry>(
+-            "/odom", 10, std::bind(&ObstacleTracker::odomCallback, this, std::placeholders::_1));
++            "/odom", 10,
++            [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) { odomCallback(msg); });
+       }
+       obstacles_sub_ = nh_->create_subscription<obstacle_detector::msg::Obstacles>(
+-            "raw_obstacles", 10, std::bind(&ObstacleTracker::obstaclesCallback, this, std::placeholders::_1));
++            "raw_obstacles", 10,
++            [this](obstacle_detector::msg::Obstacles::ConstSharedPtr msg) { obstaclesCallback(msg); });
+       obstacles_pub_ = nh_->create_publisher<obstacle_detector::msg::Obstacles>("tracked_obstacles", rclcpp::QoS(5));
+       obstacles_vis_pub_ = nh_->create_publisher<visualization_msgs::msg::MarkerArray>("tracked_obstacles_visualization", 10);
+     }
+--- a/src/obstacle_publisher.cpp
++++ b/src/obstacle_publisher.cpp
+@@ -34,6 +34,7 @@
+  */
+ 
+ #include "obstacle_detector/obstacle_publisher.h"
++#include "obstacle_detector/utilities/rclcpp_compat.h"
+ 
+ using namespace std;
+ using namespace obstacle_detector;
+@@ -63,13 +64,13 @@
+ void ObstaclePublisher::updateParamsUtil() {
+   bool prev_active = p_active_;
+ 
+-  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("reset", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "reset", rclcpp::PARAMETER_BOOL);
+   // Before using compensate_robot_velocity, consider using pointcloud input from map frame instead of base_link frame
+-  nh_->declare_parameter("fusion_example", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("fission_example", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("loop_rate", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("radius_margin", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "fusion_example", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "fission_example", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "loop_rate", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "radius_margin", rclcpp::PARAMETER_DOUBLE);
+ 
+   nh_->get_parameter_or("active", p_active_, true);
+   nh_->get_parameter_or("reset", p_reset_, false);
+@@ -78,11 +79,11 @@
+   nh_->get_parameter_or("loop_rate", p_loop_rate_, 10.0);
+   nh_->get_parameter_or("radius_margin", p_radius_margin_, 0.25);
+ 
+-  nh_->declare_parameter("x_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+-  nh_->declare_parameter("y_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+-  nh_->declare_parameter("r_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+-  nh_->declare_parameter("vx_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+-  nh_->declare_parameter("vy_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "x_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "y_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "r_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "vx_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "vy_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+ 
+   nh_->get_parameter("x_vector", p_x_vector_);
+   nh_->get_parameter("y_vector", p_y_vector_);
+@@ -90,7 +91,7 @@
+   nh_->get_parameter("vx_vector", p_vx_vector_);
+   nh_->get_parameter("vy_vector", p_vy_vector_);
+ 
+-  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
++  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
+   nh_->get_parameter_or("frame_id", p_frame_id_, string("map"));
+ 
+   p_sampling_time_ = 1.0 / p_loop_rate_;
+--- /dev/null
++++ b/include/obstacle_detector/utilities/rclcpp_compat.h
+@@ -0,0 +1,70 @@
++/*
++ * ROS 2 distro compatibility shims for obstacle_detector.
++ *
++ * This fork has to build on BOTH:
++ *   - Humble (Ubuntu 22.04) — the development machine and the simulator
++ *   - Foxy   (Ubuntu 20.04) — the G1's onboard computer
++ *
++ * Nothing here changes behaviour on either distro; it only spells the same
++ * operation the way each rclcpp version accepts.
++ */
++
++#pragma once
++
++#include <string>
++
++#include "rclcpp/rclcpp.hpp"
++
++#if __has_include(<rclcpp/version.h>)
++#include "rclcpp/version.h"
++#endif
++
++// Node::declare_parameter(name, rclcpp::ParameterType) — declare a parameter
++// by TYPE with no default, so it stays unset unless an override is supplied —
++// arrived with rclcpp 16 (Humble). Foxy's rclcpp (2.4) has no version.h and no
++// such overload.
++// (Two nested #ifs, not `defined(X) && X(...)`: the preprocessor expands the
++// whole expression before evaluating it, so the call would be a syntax error
++// on the very distro where the macro is absent.)
++#ifdef RCLCPP_VERSION_GTE
++#  if RCLCPP_VERSION_GTE(16, 0, 0)
++#    define OBSTACLE_DETECTOR_HAS_TYPED_PARAM_DECL 1
++#  else
++#    define OBSTACLE_DETECTOR_HAS_TYPED_PARAM_DECL 0
++#  endif
++#else
++#  define OBSTACLE_DETECTOR_HAS_TYPED_PARAM_DECL 0
++#endif
++
++namespace obstacle_detector
++{
++
++/**
++ * Declare `name` with no default value.
++ *
++ * Humble: declared with the given static type, left unset.
++ * Foxy:   declared with an empty ParameterValue, i.e. PARAMETER_NOT_SET.
++ *
++ * Both leave the parameter UNSET when no override is given, which is what
++ * every call site relies on: the subsequent get_parameter_or(name, out, dflt)
++ * returns `dflt` exactly when the parameter was not overridden, because
++ * NodeParameters::get_parameter() reports false for a NOT_SET parameter on
++ * Foxy and for an unset statically-typed parameter on Humble.
++ *
++ * The only difference is later re-assignment: Humble rejects a set() of the
++ * wrong type, Foxy accepts it (parameters were dynamically typed before
++ * Humble). No node in this package re-types a parameter at runtime.
++ */
++template<typename NodeT>
++inline void declare_parameter_typed(
++  NodeT && nh, const std::string & name, rclcpp::ParameterType type)
++{
++#if OBSTACLE_DETECTOR_HAS_TYPED_PARAM_DECL
++  nh->declare_parameter(name, type);
++#else
++  (void)type;
++  nh->declare_parameter(name);
++#endif
++}
++
++}  // namespace obstacle_detector

@@ -101,4 +101,36 @@ git -C src/external/obstacle_detector_2 apply --check ../../../patches/0009-obst
 git -C src/external/obstacle_detector_2 apply --check ../../../patches/0010-obstacle-detector-p5-retire-inert-tracker-loop-rate.patch 2>/dev/null \
   && git -C src/external/obstacle_detector_2 apply ../../../patches/0010-obstacle-detector-p5-retire-inert-tracker-loop-rate.patch \
   || echo "obstacle_detector P-5 patch already applied"
+# F-1 (Foxy portability): the G1's onboard computer runs Foxy (Ubuntu 20.04)
+# while this workspace is developed on Humble. Patch 0011 makes the fork build
+# on BOTH — rosidl_get_typesupport_target vs rosidl_target_interfaces, the
+# tf2_geometry_msgs .hpp/.h spelling plus the missing unstamped-Pose
+# doTransform, declare_parameter-by-type, and the const-reference subscription
+# callbacks Foxy's rclcpp cannot bind. No computation changes; see the patch
+# header. Verify with ros2/tools/foxy_docker.sh (focal container).
+git -C src/external/obstacle_detector_2 apply --check ../../../patches/0011-obstacle-detector-f1-foxy-portability.patch 2>/dev/null \
+  && git -C src/external/obstacle_detector_2 apply ../../../patches/0011-obstacle-detector-f1-foxy-portability.patch \
+  || echo "obstacle_detector F-1 patch already applied"
+# F-1 continued across the rest of src/external. Same rule everywhere: pick the
+# spelling each distro accepts, never change what the code computes.
+#   0012 pointcloud_to_laserscan — tf2_sensor_msgs .h/.hpp
+#   0013 pcl_ros                 — tf2_geometry_msgs .h/.hpp, two rclcpp 16 APIs
+#   0014 livox_ros_driver2       — typesupport idiom by capability, not DISTRO_ROS
+#   0015 DLIO                    — typesupport idiom, callback form, and PCL 1.10's
+#                                  boost::shared_ptr PointCloud::Ptr (focal)
+# rmw_cyclonedds has NO patch and is not built on Foxy: its foxy branch needs
+# CycloneDDS 0.7's ddsi_sertopic API and its humble branch needs rmw headers
+# Foxy lacks, so Foxy uses the ros-foxy-rmw-cyclonedds-cpp deb instead.
+git -C src/external/pointcloud_to_laserscan apply --check ../../../patches/0012-pointcloud-to-laserscan-f1-foxy-tf2-header.patch 2>/dev/null \
+  && git -C src/external/pointcloud_to_laserscan apply ../../../patches/0012-pointcloud-to-laserscan-f1-foxy-tf2-header.patch \
+  || echo "pointcloud_to_laserscan F-1 patch already applied"
+git -C src/external/perception_pcl apply --check ../../../patches/0013-pcl-ros-f1-foxy-portability.patch 2>/dev/null \
+  && git -C src/external/perception_pcl apply ../../../patches/0013-pcl-ros-f1-foxy-portability.patch \
+  || echo "pcl_ros F-1 patch already applied"
+git -C src/external/livox_ros_driver2 apply --check ../../../patches/0014-livox-driver-f1-foxy-typesupport-idiom.patch 2>/dev/null \
+  && git -C src/external/livox_ros_driver2 apply ../../../patches/0014-livox-driver-f1-foxy-typesupport-idiom.patch \
+  || echo "livox driver F-1 patch already applied"
+git -C src/external/direct_lidar_inertial_odometry apply --check ../../../patches/0015-dlio-f1-foxy-and-pcl-1-10-portability.patch 2>/dev/null \
+  && git -C src/external/direct_lidar_inertial_odometry apply ../../../patches/0015-dlio-f1-foxy-and-pcl-1-10-portability.patch \
+  || echo "DLIO F-1 patch already applied"
 echo "External sources ready."

@@ -1,0 +1,248 @@
+F-1 (Foxy portability): build DLIO on Foxy/focal as well as Humble/jammy.
+
+The G1's onboard computer runs ROS 2 Foxy on Ubuntu 20.04. Three differences,
+none of which changes the odometry:
+
+1. CMake. rosidl_get_typesupport_target() is Galactic+. Foxy's equivalent is
+   rosidl_target_interfaces(), which must be called AFTER the consuming target
+   exists — so it sits next to dlio_map_node instead of next to
+   rosidl_generate_interfaces(). cpp_typesupport_target simply stays unset on
+   Foxy and expands to nothing.
+
+2. Subscription callback. callbackKeyframe() takes `const ConstSharedPtr&`, a
+   form Foxy's subscription traits cannot deduce the message type through
+   (Galactic+). The subscription now passes a ConstSharedPtr-by-value lambda
+   that forwards to it; the callback keeps its signature and its body.
+
+3. PCL smart pointers. pcl::PointCloud<T>::Ptr and pcl::PointIndices::Ptr are
+   boost::shared_ptr on PCL 1.10 (focal) and std::shared_ptr from PCL 1.11 on
+   (jammy). Upstream's std::make_shared assumed >= 1.11 and does not convert on
+   focal. pcl::make_shared exists in both and yields whichever handle ::Ptr
+   actually is — same object, same aligned allocator. 21 sites in map.cc and
+   odom.cc, including four that constructed a `const` cloud and now construct a
+   non-const one and rely on the Ptr -> ConstPtr conversion (identical on both
+   handle types).
+
+Applies on top of patch 0006 (which touches only the odom.cc subscriptions).
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -39,8 +39,14 @@
+         srv/SavePCD.srv
+     DEPENDENCIES       
+ )
+-rosidl_get_typesupport_target(cpp_typesupport_target
+-  ${PROJECT_NAME} rosidl_typesupport_cpp)
++# rosidl_get_typesupport_target() is Galactic+. On Foxy — the G1's onboard
++# distro — the equivalent is rosidl_target_interfaces(), which has to be called
++# AFTER the consuming target exists, so it lives next to dlio_map_node below.
++# cpp_typesupport_target simply stays unset there and expands to nothing.
++if(COMMAND rosidl_get_typesupport_target)
++  rosidl_get_typesupport_target(cpp_typesupport_target
++    ${PROJECT_NAME} rosidl_typesupport_cpp)
++endif()
+ 
+ include_directories(${PCL_INCLUDE_DIRS})
+ include_directories(${EIGEN3_INCLUDE_DIR})
+@@ -71,6 +77,10 @@
+ # Mapping Node
+ add_executable (dlio_map_node src/dlio/map_node.cc src/dlio/map.cc)
+ target_link_libraries(dlio_map_node ${PCL_LIBRARIES}  ${cpp_typesupport_target})
++if(NOT COMMAND rosidl_get_typesupport_target)
++  # Foxy: link this package's own SavePCD typesupport the pre-Galactic way.
++  rosidl_target_interfaces(dlio_map_node ${PROJECT_NAME} "rosidl_typesupport_cpp")
++endif()
+ ament_target_dependencies(dlio_map_node "tf2_ros" "pcl_ros" "pcl_conversions" "rclcpp")
+ 
+ ament_export_include_directories(include)
+--- a/src/dlio/map.cc
++++ b/src/dlio/map.cc
+@@ -13,6 +13,13 @@
+ #include "dlio/map.h"
+ #include "dlio/utils.h"
+ 
++// NOTE on pcl::make_shared below (this file and odom.cc): PointCloud::Ptr is
++// boost::shared_ptr on PCL 1.10 (focal / ROS 2 Foxy, the G1's onboard PC) and
++// std::shared_ptr from PCL 1.11 on (jammy / Humble). pcl::make_shared exists in
++// both and yields whichever one PointCloud::Ptr actually is, so the assignments
++// compile on either. Same object, same aligned allocator; only the handle type
++// differs. Upstream's std::make_shared assumed PCL >= 1.11.
++
+ dlio::MapNode::MapNode(): Node("dlio_map_node") {
+ 
+   this->getParams();
+@@ -20,8 +27,14 @@
+   this->keyframe_cb_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+   auto keyframe_sub_opt = rclcpp::SubscriptionOptions();
+   keyframe_sub_opt.callback_group = this->keyframe_cb_group;
++  // ConstSharedPtr BY VALUE: Foxy's subscription traits cannot deduce the
++  // message type through a `const ConstSharedPtr&` callback parameter (that
++  // form arrived in Galactic), and the G1's onboard computer runs Foxy.
++  // callbackKeyframe() keeps its signature and its body.
+   this->keyframe_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>("keyframes", 10,
+-      std::bind(&dlio::MapNode::callbackKeyframe, this, std::placeholders::_1), keyframe_sub_opt);
++      [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr keyframe) {
++        this->callbackKeyframe(keyframe);
++      }, keyframe_sub_opt);
+ 
+   this->map_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 100);
+ 
+@@ -29,7 +42,7 @@
+   this->save_pcd_srv = this->create_service<direct_lidar_inertial_odometry::srv::SavePCD>("save_pcd",
+       std::bind(&dlio::MapNode::savePCD, this, std::placeholders::_1, std::placeholders::_2), rmw_qos_profile_services_default, this->save_pcd_cb_group);
+ 
+-  this->dlio_map = std::make_shared<pcl::PointCloud<PointType>>();
++  this->dlio_map = pcl::make_shared<pcl::PointCloud<PointType>>();
+ 
+   pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
+ 
+@@ -52,7 +65,7 @@
+ void dlio::MapNode::callbackKeyframe(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& keyframe) {
+ 
+   // convert scan to pcl format
+-  pcl::PointCloud<PointType>::Ptr keyframe_pcl = std::make_shared<pcl::PointCloud<PointType>>();
++  pcl::PointCloud<PointType>::Ptr keyframe_pcl = pcl::make_shared<pcl::PointCloud<PointType>>();
+   pcl::fromROSMsg(*keyframe, *keyframe_pcl);
+ 
+   // voxel filter
+@@ -76,7 +89,7 @@
+ void dlio::MapNode::savePCD(std::shared_ptr<direct_lidar_inertial_odometry::srv::SavePCD::Request> req,
+                             std::shared_ptr<direct_lidar_inertial_odometry::srv::SavePCD::Response> res) {
+ 
+-  pcl::PointCloud<PointType>::Ptr m = std::make_shared<pcl::PointCloud<PointType>>(*this->dlio_map);
++  pcl::PointCloud<PointType>::Ptr m = pcl::make_shared<pcl::PointCloud<PointType>>(*this->dlio_map);
+ 
+   float leaf_size = req->leaf_size;
+   std::string p = req->save_path;
+--- a/src/dlio/odom.cc
++++ b/src/dlio/odom.cc
+@@ -90,10 +90,10 @@
+   this->first_imu_stamp = 0.;
+   this->prev_imu_stamp = 0.;
+ 
+-  this->original_scan = std::make_shared<const pcl::PointCloud<PointType>>();
+-  this->deskewed_scan = std::make_shared<const pcl::PointCloud<PointType>>();
+-  this->current_scan = std::make_shared<const pcl::PointCloud<PointType>>();
+-  this->submap_cloud = std::make_shared<const pcl::PointCloud<PointType>>();
++  this->original_scan = pcl::make_shared<pcl::PointCloud<PointType>>();
++  this->deskewed_scan = pcl::make_shared<pcl::PointCloud<PointType>>();
++  this->current_scan = pcl::make_shared<pcl::PointCloud<PointType>>();
++  this->submap_cloud = pcl::make_shared<pcl::PointCloud<PointType>>();
+ 
+   this->num_processed_keyframes = 0;
+ 
+@@ -449,7 +449,7 @@
+     if (this->length_traversed < 0.1) { return; }
+   }
+ 
+-  pcl::PointCloud<PointType>::Ptr deskewed_scan_t_ = std::make_shared<pcl::PointCloud<PointType>>();
++  pcl::PointCloud<PointType>::Ptr deskewed_scan_t_ = pcl::make_shared<pcl::PointCloud<PointType>>();
+ 
+   pcl::transformPointCloud (*published_cloud, *deskewed_scan_t_, T_cloud);
+ 
+@@ -501,7 +501,7 @@
+ 
+ void dlio::OdomNode::getScanFromROS(const sensor_msgs::msg::PointCloud2::SharedPtr& pc) {
+ 
+-  pcl::PointCloud<PointType>::Ptr original_scan_ = std::make_shared<pcl::PointCloud<PointType>>();
++  pcl::PointCloud<PointType>::Ptr original_scan_ = pcl::make_shared<pcl::PointCloud<PointType>>();
+   pcl::fromROSMsg(*pc, *original_scan_);
+ 
+   // Remove NaNs
+@@ -580,7 +580,7 @@
+ 
+     }
+ 
+-    pcl::PointCloud<PointType>::Ptr deskewed_scan_ = std::make_shared<pcl::PointCloud<PointType>>();
++    pcl::PointCloud<PointType>::Ptr deskewed_scan_ = pcl::make_shared<pcl::PointCloud<PointType>>();
+     pcl::transformPointCloud (*this->original_scan, *deskewed_scan_,
+                               this->T_prior * this->extrinsics.baselink2lidar_T);
+     this->deskewed_scan = deskewed_scan_;
+@@ -589,7 +589,7 @@
+ 
+   // Voxel Grid Filter
+   if (this->vf_use_) {
+-    pcl::PointCloud<PointType>::Ptr current_scan_ = std::make_shared<pcl::PointCloud<PointType>>(*this->deskewed_scan);
++    pcl::PointCloud<PointType>::Ptr current_scan_ = pcl::make_shared<pcl::PointCloud<PointType>>(*this->deskewed_scan);
+     this->voxel.setInputCloud(current_scan_);
+     this->voxel.filter(*current_scan_);
+     this->current_scan = current_scan_;
+@@ -601,7 +601,7 @@
+ 
+ void dlio::OdomNode::deskewPointcloud() {
+ 
+-  pcl::PointCloud<PointType>::Ptr deskewed_scan_ = std::make_shared<pcl::PointCloud<PointType>>(1, this->original_scan->points.size());
++  pcl::PointCloud<PointType>::Ptr deskewed_scan_ = pcl::make_shared<pcl::PointCloud<PointType>>(1, this->original_scan->points.size());
+   // deskewed_scan_->points.resize(this->original_scan->points.size());
+   // individual point timestamps should be relative to this time
+   double sweep_ref_time = rclcpp::Time(this->scan_header_stamp).seconds();
+@@ -1030,7 +1030,7 @@
+   }
+ 
+   // Align with current submap with global IMU transformation as initial guess
+-  pcl::PointCloud<PointType>::Ptr aligned = std::make_shared<pcl::PointCloud<PointType>>();
++  pcl::PointCloud<PointType>::Ptr aligned = pcl::make_shared<pcl::PointCloud<PointType>>();
+   this->gicp.align(*aligned);
+ 
+   // Get final transformation in global frame
+@@ -1474,7 +1474,7 @@
+   }
+ 
+   // create a pointcloud with points at keyframes
+-  pcl::PointCloud<PointType>::Ptr cloud = std::make_shared<pcl::PointCloud<PointType>>();
++  pcl::PointCloud<PointType>::Ptr cloud = pcl::make_shared<pcl::PointCloud<PointType>>();
+ 
+   std::unique_lock<decltype(this->keyframes_mutex)> lock(this->keyframes_mutex);
+   for (int i = 0; i < this->num_processed_keyframes; i++) {
+@@ -1490,10 +1490,10 @@
+   this->convex_hull.setInputCloud(cloud);
+ 
+   // get the indices of the keyframes on the convex hull
+-  pcl::PointCloud<PointType>::Ptr convex_points = std::make_shared<pcl::PointCloud<PointType>>();
++  pcl::PointCloud<PointType>::Ptr convex_points = pcl::make_shared<pcl::PointCloud<PointType>>();
+   this->convex_hull.reconstruct(*convex_points);
+ 
+-  pcl::PointIndices::Ptr convex_hull_point_idx = std::make_shared<pcl::PointIndices>();
++  pcl::PointIndices::Ptr convex_hull_point_idx = pcl::make_shared<pcl::PointIndices>();
+   this->convex_hull.getHullPointIndices(*convex_hull_point_idx);
+ 
+   this->keyframe_convex.clear();
+@@ -1511,7 +1511,7 @@
+   }
+ 
+   // create a pointcloud with points at keyframes
+-  auto cloud = std::make_shared<pcl::PointCloud<PointType>>();
++  auto cloud = pcl::make_shared<pcl::PointCloud<PointType>>();
+ 
+   std::unique_lock<decltype(this->keyframes_mutex)> lock(this->keyframes_mutex);
+   for (int i = 0; i < this->num_processed_keyframes; i++) {
+@@ -1527,10 +1527,10 @@
+   this->concave_hull.setInputCloud(cloud);
+ 
+   // get the indices of the keyframes on the concave hull
+-  pcl::PointCloud<PointType>::Ptr concave_points = std::make_shared<pcl::PointCloud<PointType>>();
++  pcl::PointCloud<PointType>::Ptr concave_points = pcl::make_shared<pcl::PointCloud<PointType>>();
+   this->concave_hull.reconstruct(*concave_points);
+ 
+-  pcl::PointIndices::Ptr concave_hull_point_idx = std::make_shared<pcl::PointIndices>();
++  pcl::PointIndices::Ptr concave_hull_point_idx = pcl::make_shared<pcl::PointIndices>();
+   this->concave_hull.getHullPointIndices(*concave_hull_point_idx);
+ 
+   this->keyframe_concave.clear();
+@@ -1739,7 +1739,7 @@
+     this->pauseSubmapBuildIfNeeded();
+ 
+     // reinitialize submap cloud and normals
+-    pcl::PointCloud<PointType>::Ptr submap_cloud_ = std::make_shared<pcl::PointCloud<PointType>>();
++    pcl::PointCloud<PointType>::Ptr submap_cloud_ = pcl::make_shared<pcl::PointCloud<PointType>>();
+     std::shared_ptr<nano_gicp::CovarianceList> submap_normals_ (std::make_shared<nano_gicp::CovarianceList>());
+ 
+     for (auto k : this->submap_kf_idx_curr) {
+@@ -1780,7 +1780,7 @@
+ 
+     Eigen::Matrix4d Td = T.cast<double>();
+ 
+-    pcl::PointCloud<PointType>::Ptr transformed_keyframe = std::make_shared<pcl::PointCloud<PointType>>();
++    pcl::PointCloud<PointType>::Ptr transformed_keyframe = pcl::make_shared<pcl::PointCloud<PointType>>();
+     pcl::transformPointCloud (*raw_keyframe, *transformed_keyframe, T);
+ 
+     std::shared_ptr<nano_gicp::CovarianceList> transformed_covariances (std::make_shared<nano_gicp::CovarianceList>(raw_covariances->size()));
