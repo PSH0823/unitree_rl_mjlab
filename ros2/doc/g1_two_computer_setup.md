@@ -12,6 +12,20 @@ Mid-360 LiDAR 연결 → DLIO 오도메트리 → 장애물 검출·추적 → *
 쓰였습니다. 모든 명령에는 **어느 컴퓨터에서 / 어느 디렉토리에서 / 몇 번
 터미널에서** 실행하는지가 붙어 있습니다.
 
+> ### ⚠ 2026-08-10 — **A-9 / B-5 / Part C는 폐기되었습니다**
+>
+> Computer 2 ↔ Computer 3 링크는 CycloneDDS에서 **Fast DDS**로 바뀌었습니다.
+> `~/.g1_viz_env`, `viz_env_computer{2,3}.sh`, `config/cyclonedds/*.xml`을
+> 쓰는 절차(A-9, B-5, Part C, D-2의 env 줄)는 **그대로 하면 링크가 서지
+> 않습니다** — 08-07 세션에서 실제로 그랬고, 원인은
+> **[`g1_fastdds_field_manual_ko.md`](g1_fastdds_field_manual_ko.md) §0**에
+> 정리돼 있습니다. 빌드 명령도 그 문서 쪽이 최신입니다
+> (Computer 2 15개 / Computer 3 3개).
+>
+> **이 문서에서 계속 쓰는 부분**: A-1~A-8 (사전확인·apt·clone·외부소스·빌드·
+> LiDAR IP 탐색·`MID360_config.json`), A-10 preflight, A-11 단계별 기동,
+> A-12 Foxy 주의사항, D-3~D-5, Part F, 부록 2.
+
 > 기존 [`README.md`](README.md)(3대 구성: Blackbox가 `/livox/*`를 주는 구성)와
 > 달리, 이 문서는 **Mid-360을 Computer 2에 직접 물리는 2대 구성**입니다.
 > 즉 `driver:=on`이고, `MID360_config.json`을 **반드시 채워야** 합니다.

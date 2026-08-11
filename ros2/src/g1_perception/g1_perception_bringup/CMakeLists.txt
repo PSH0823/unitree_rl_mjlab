@@ -33,6 +33,9 @@ install(PROGRAMS
         # Stage 5 case: the stationary-drift criterion, computed live instead
         # of offline from the bag.
         scripts/hw_odom_drift.py
+        # The Fast DDS link checker: run by the operator on BOTH machines, and
+        # on Computer 3 the only bringup file that is needed at all.
+        scripts/g1_link_check.sh
         DESTINATION lib/${PROJECT_NAME})
 # Visualization-link environment (sourced, not run): Computer 2/3 CycloneDDS
 # setup for the off-board plotting client. Installed under share/ because
@@ -42,8 +45,14 @@ install(PROGRAMS
 install(PROGRAMS
         scripts/viz_env_computer2.sh
         scripts/viz_env_computer3.sh
+        # Fast DDS link (2026-08-10, doc/g1_fastdds_field_manual_ko.md). One
+        # script for both machines: unlike the Cyclone pair it needs no
+        # interface name and reads no XML out of the prefix, so its behaviour
+        # does not depend on which install layout it was sourced from.
+        scripts/net_env.sh
         DESTINATION share/${PROJECT_NAME}/env)
-install(FILES scripts/viz_env.example DESTINATION share/${PROJECT_NAME}/env)
+install(FILES scripts/viz_env.example scripts/net_env.example
+        DESTINATION share/${PROJECT_NAME}/env)
 
 if(BUILD_TESTING)
   # Integration smoke (§16.1): needs the ROS2-enabled simulator running;

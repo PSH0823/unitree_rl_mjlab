@@ -1,0 +1,47 @@
+# Copy to ~/.g1_net_env on EACH machine (Computer 2 and Computer 3), then
+# add this line to the BOTTOM of ~/.bashrc on that machine:
+#
+#     [ -f ~/.g1_net_env ] && . ~/.g1_net_env
+#
+# Everything here is a REAL ROS 2 environment variable. Sourcing this file is
+# by itself enough to put a shell on the link — there is no second script that
+# has to translate anything. (That was the bug in the old ~/.g1_viz_env:
+# G1_VIZ_DOMAIN_ID is not a name ROS knows, so writing the file did nothing
+# until viz_env_computerN.sh was ALSO sourced.)
+#
+# The two machines must agree on ROS_DOMAIN_ID and RMW_IMPLEMENTATION. Nothing
+# else has to match.
+
+# --- required: identical on Computer 2 and Computer 3 ----------------------
+# Any value 0-101. Pick one that is not already in use on the robot's network
+# and write it in the session log. 0 is a bad choice: it is everyone's default.
+export ROS_DOMAIN_ID=7
+
+# Fast DDS. This is the DEFAULT middleware of both Foxy and Humble, so no
+# extra package has to be installed on either machine, and it does not collide
+# with the CycloneDDS that unitree_sdk2 uses on its own (different vendor,
+# different process, different network).
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+# 1 here means "never leave this machine" and is the single most common cause
+# of "the topic list looks right but Computer 3 sees nothing". Keep it 0.
+export ROS_LOCALHOST_ONLY=0
+
+# CycloneDDS settings left over from another session are inert under Fast DDS,
+# but leaving them set makes every later diagnosis ambiguous. Drop them.
+unset CYCLONEDDS_URI
+
+# --- optional: only when multicast is blocked on the network ---------------
+# The IP of the OTHER computer on the link (on Computer 2: Computer 3's IP;
+# on Computer 3: Computer 2's IP). Used by
+#   source net_env.sh peers
+# which renders the Fast DDS static-peer profile from it. Leave commented out
+# unless g1_link_check.sh told you multicast is blocked.
+#export G1_PEER_IP=192.168.123.164
+
+# --- optional: only when both sides run on ONE machine ----------------------
+# Foxy's Fast DDS 2.0 and Humble's Fast DDS 2.6 do NOT interoperate over the
+# shared-memory transport, so a Foxy process and a Humble process on the SAME
+# host find nothing. Two separate machines never use shared memory, so this is
+# irrelevant in the field; set it only for a single-machine rehearsal:
+#     source net_env.sh udp-only

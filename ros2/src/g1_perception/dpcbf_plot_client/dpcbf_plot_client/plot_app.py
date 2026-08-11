@@ -37,6 +37,11 @@ _COL_TRAIL = (90, 130, 170)
 _COL_ROBOT = (80, 200, 255)
 _COL_OBS_PLOT = (255, 120, 120)
 _COL_OBS_SAFE = (255, 60, 60, 90)
+# Perception-only sessions (no DPCBF control seam on the robot yet) have no
+# plot sample at all, so /obstacles_safe is the ONLY obstacle layer on screen.
+# Drawing it in the faint "secondary layer" colour then hides the very thing
+# the session exists to look at.
+_COL_OBS_HW = (255, 90, 90)
 
 
 def _circle(x, y, r, n=40):
@@ -224,11 +229,24 @@ class PlotApp:
                     pen=pg.mkPen(color, width=1, style=QtCore.Qt.DashLine))
                 self.obstacle_curves.append(varrow)
         if snap['obstacles']:
+            # Primary layer when there is no control sample, secondary (faint)
+            # when there is one and the filter-selected set is already drawn.
+            hw_only = sample is None
+            col = _COL_OBS_HW if hw_only else _COL_OBS_SAFE
+            width = 2 if hw_only else 1
             for o in snap['obstacles']:
                 cx, cy = _circle(o['x'], o['y'], max(o['radius'], 0.02))
-                item = self.view.plot(cx, cy, pen=pg.mkPen(_COL_OBS_SAFE,
-                                                           width=1))
+                item = self.view.plot(cx, cy, pen=pg.mkPen(col, width=width))
                 self.obstacle_curves.append(item)
+                # The tracker's velocity estimate, drawn as one second of
+                # travel from the circle centre — same convention as the
+                # control-sample obstacles above.
+                if o['vx'] or o['vy']:
+                    varrow = self.view.plot(
+                        [o['x'], o['x'] + o['vx']],
+                        [o['y'], o['y'] + o['vy']],
+                        pen=pg.mkPen(col, width=1, style=QtCore.Qt.DashLine))
+                    self.obstacle_curves.append(varrow)
 
         self._refresh_banner(snap)
 

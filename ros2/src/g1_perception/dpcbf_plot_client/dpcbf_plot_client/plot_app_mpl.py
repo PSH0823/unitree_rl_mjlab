@@ -147,11 +147,21 @@ class PlotAppMpl:
                 self.ax_view.add_patch(c)
                 self._patches.append(c)
         if snap['obstacles']:
+            # See plot_app.py: with no control sample this is the ONLY
+            # obstacle layer, so it must not be drawn as a faint overlay.
+            hw_only = sample is None
+            alpha, lw = (0.9, 1.5) if hw_only else (0.35, 0.8)
             for o in snap['obstacles']:
                 c = Circle((o['x'], o['y']), max(o['radius'], 0.02),
-                           fill=False, color='#ff3c3c', alpha=0.35, lw=0.8)
+                           fill=False, color='#ff3c3c', alpha=alpha, lw=lw)
                 self.ax_view.add_patch(c)
                 self._patches.append(c)
+                if o['vx'] or o['vy']:
+                    (v,) = self.ax_view.plot(
+                        [o['x'], o['x'] + o['vx']],
+                        [o['y'], o['y'] + o['vy']],
+                        color='#ff3c3c', alpha=alpha, lw=1.0, ls='--')
+                    self._patches.append(v)
         self.ax_view.relim()
         self.ax_view.autoscale_view()
 

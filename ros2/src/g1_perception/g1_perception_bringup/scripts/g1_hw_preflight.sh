@@ -73,20 +73,52 @@ else
     *) warn "AMENT_PREFIX_PATH has no obvious workspace install prefix" ;;
   esac
 fi
+# Middleware. §12.2 asked for rmw_cyclonedds_cpp because of Unitree SDK2
+# coexistence (T10): ONE process linking both unitree_sdk2 and rclcpp must not
+# load two CycloneDDS copies. A perception-only session has no such process —
+# nothing here links unitree_sdk2 — so rmw_fastrtps_cpp is equally valid and is
+# what the Computer 2 <-> Computer 3 link uses (it is the stock middleware of
+# both Foxy and Humble, so neither machine has to build or apt-install an rmw).
+# Both are accepted; anything else, or unset, is a hard fail, because the two
+# machines silently running different vendors looks exactly like a dead network.
 RMW="${RMW_IMPLEMENTATION:-<unset>}"
-if [ "$RMW" != rmw_cyclonedds_cpp ]; then
-  fail "RMW_IMPLEMENTATION=$RMW — §12.2 requires rmw_cyclonedds_cpp for Unitree SDK2 coexistence (blocks stage 2)"
-else
-  ok "RMW_IMPLEMENTATION=rmw_cyclonedds_cpp"
-fi
+case "$RMW" in
+  rmw_cyclonedds_cpp) ok "RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" ;;
+  rmw_fastrtps_cpp)   ok "RMW_IMPLEMENTATION=rmw_fastrtps_cpp" ;;
+  *) fail "RMW_IMPLEMENTATION=$RMW — expected rmw_fastrtps_cpp (the Fast DDS link, see net_env.sh) or rmw_cyclonedds_cpp (§12.2). The OTHER computer must use the same one (blocks stage 2)" ;;
+esac
 info "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-<unset, i.e. 0>}"
-[ -n "${ROS_DOMAIN_ID:-}" ] || warn "ROS_DOMAIN_ID unset — it defaults to 0, which must MATCH the robot's SDK2 domain. Set it explicitly so the session log records it"
+[ -n "${ROS_DOMAIN_ID:-}" ] || warn "ROS_DOMAIN_ID unset — it defaults to 0, which must MATCH the other computer (and, once the control seam lands, the robot's SDK2 domain). Set it explicitly so the session log records it"
 info "use_sim_time is FALSE on every hardware node (asserted in the launch files, not inherited)"
 
+# The loopback trap, Fast DDS edition: ROS_LOCALHOST_ONLY=1 leaves every topic
+# name looking perfectly normal while no byte can reach Computer 3.
+if [ "${ROS_LOCALHOST_ONLY:-0}" = 1 ]; then
+  fail "ROS_LOCALHOST_ONLY=1 — traffic cannot leave this machine, and the topic list still looks correct (blocks stage 2)"
+else
+  ok "ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}"
+fi
+
+# Fast DDS profile file, when one is in use. An unreadable path is the quiet
+# failure here: Fast DDS ignores it without a word and falls back to defaults,
+# so a static-peer setup silently becomes a multicast one.
+if [ "$RMW" = rmw_fastrtps_cpp ] && [ -n "${FASTRTPS_DEFAULT_PROFILES_FILE:-}" ]; then
+  if [ -r "$FASTRTPS_DEFAULT_PROFILES_FILE" ]; then
+    info "FASTRTPS_DEFAULT_PROFILES_FILE=$FASTRTPS_DEFAULT_PROFILES_FILE"
+    PEER=$(grep -oP '<address>\K[^<]+' "$FASTRTPS_DEFAULT_PROFILES_FILE" 2>/dev/null | head -1)
+    [ -n "$PEER" ] && ok "unicast discovery peer: $PEER"
+  else
+    fail "FASTRTPS_DEFAULT_PROFILES_FILE points at $FASTRTPS_DEFAULT_PROFILES_FILE which is not readable — Fast DDS ignores it SILENTLY (blocks stage 2)"
+  fi
+fi
+
 # CycloneDDS interface pin. `lo` here is the Phase-2 trap: topics are visible,
-# no data ever crosses the wire to another machine.
+# no data ever crosses the wire to another machine. Only meaningful when
+# Cyclone is the selected middleware.
 URI="${CYCLONEDDS_URI:-}"
-if [ -z "$URI" ]; then
+if [ "$RMW" != rmw_cyclonedds_cpp ]; then
+  [ -n "$URI" ] && warn "CYCLONEDDS_URI is set but the middleware is $RMW — it has no effect; unset it so later diagnosis is unambiguous"
+elif [ -z "$URI" ]; then
   warn "CYCLONEDDS_URI unset — Cyclone will pick an interface itself. Pin it to the robot's perception NIC (§12.2)"
 else
   info "CYCLONEDDS_URI=$URI"

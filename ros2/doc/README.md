@@ -5,6 +5,19 @@
 안 되면 무엇부터 보는지를 한 곳에 모았습니다. 세부 절차는 각 문서로
 링크하며 여기서 반복하지 않습니다(§8 문서 인덱스).
 
+> ### ⚠ 2026-08-10 — Computer 2 ↔ Computer 3 링크는 **Fast DDS**로 바뀌었습니다
+>
+> **[`g1_fastdds_field_manual_ko.md`](g1_fastdds_field_manual_ko.md)** 를
+> 보십시오. 이 파일과 `g1_two_computer_setup.md`의 **네트워크 부분
+> (`~/.g1_viz_env`, `viz_env_computer{2,3}.sh`, CycloneDDS XML)은 더 이상
+> 쓰지 않습니다.** 08-07 세션에서 링크가 전혀 서지 않았고, 원인 분석과
+> 실측 결과가 그 문서에 있습니다. 나머지 부분(토픽 소유권, 체크포인트,
+> 세션 종료 절차)은 그대로 유효합니다.
+>
+> 요약: `~/.g1_net_env`에 **`ROS_DOMAIN_ID` / `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`
+> / `ROS_LOCALHOST_ONLY=0`** — ROS가 직접 읽는 이름만 씁니다. NIC 이름도
+> XML도 없습니다. Computer 3의 빌드는 6개도 11개도 아닌 **3개**입니다.
+
 > **처음부터 세팅하는 경우 — 컴퓨터 2대(Mid-360 직결) 구성:**
 > **[`g1_two_computer_setup.md`](g1_two_computer_setup.md)**
 > `git clone`부터 apt·빌드·LiDAR IP 탐색·`MID360_config.json` 작성·
@@ -320,7 +333,8 @@ Computer 3 화면: 좌상단 배너의 `dpcbf/plot` / `odom` / `obstacles_safe` 
 
 | 상황 | 문서 |
 |---|---|
-| **아무것도 없는 상태에서 컴퓨터 2대 full 세팅 (clone→빌드→LiDAR IP→시각화)** | [`g1_two_computer_setup.md`](g1_two_computer_setup.md) |
+| **Computer 2 ↔ Computer 3 링크 (Fast DDS) + 터미널 운용 + 최신 빌드 명령** | **[`g1_fastdds_field_manual_ko.md`](g1_fastdds_field_manual_ko.md)** |
+| **아무것도 없는 상태에서 컴퓨터 2대 full 세팅 (clone→빌드→LiDAR IP→시각화)** | [`g1_two_computer_setup.md`](g1_two_computer_setup.md) (네트워크 절은 위 문서로 대체) |
 | 로봇 전원 켜기 전에 알아야 할 것 | [`g1_hardware_preflight.md`](g1_hardware_preflight.md) |
 | 검증된 것 / 검증 안 된 것 구분 | [`g1_hardware_code_audit.md`](g1_hardware_code_audit.md) |
 | **perception 세션 stage별 정확한 절차** | [`g1_first_perception_experiment.md`](g1_first_perception_experiment.md) |
