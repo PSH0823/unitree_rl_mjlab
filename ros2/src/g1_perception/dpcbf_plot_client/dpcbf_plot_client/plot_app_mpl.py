@@ -169,14 +169,19 @@ class PlotAppMpl:
         stale_after = snap['stale_after_s']
         lines = []
         any_stale = False
-        for name, key in (('dpcbf/plot', 'plot'), ('odom', 'odom'),
-                          ('obstacles_safe', 'obstacles')):
+        # optional == "may legitimately have no publisher at all"; see the
+        # same rule in plot_app.py. Keeps the banner green through a whole
+        # perception-only session so that a real dropout is visible.
+        for name, key, optional in (('dpcbf/plot', 'plot', True),
+                                    ('odom', 'odom', False),
+                                    ('obstacles_safe', 'obstacles', False)):
             if key == 'obstacles' and not snap['obstacles_available']:
                 continue
             age = ages[key]
             if age is None:
-                lines.append(f'{name}: NO DATA')
-                any_stale = True
+                lines.append(f'{name}: NO DATA'
+                             + (' (no publisher)' if optional else ''))
+                any_stale = any_stale or not optional
             elif age > stale_after:
                 lines.append(f'{name}: STALE {age:.1f}s')
                 any_stale = True

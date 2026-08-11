@@ -4,6 +4,33 @@
 통신이 전혀 되지 않았던 것**과 **빌드가 Foxy/Humble 양쪽에서 실패했던 것**을
 고친 판입니다.
 
+## 이 문서의 목표 — Computer 3 화면에 **라이브 플롯을 띄워 두는 것**
+
+Computer 3을 준비한 이유는 하나입니다: **로봇이 추정한 장애물을 노트북 화면에서
+실시간으로 보는 것.** 이 문서를 끝까지 따라가면 아래 창이 노트북에 떠 있고,
+로봇 앞을 사람이 지나갈 때 **원이 같이 움직입니다.**
+
+![정상 동작 중인 플롯 클라이언트](img/plot_client_live_ok.png)
+
+| 화면에 라이브로 그려지는 것 | 출처 | 갱신 |
+|---|---|---|
+| 로봇 위치 · heading · 지나온 trail | `/odom` | 100 Hz 수신, 25 Hz 렌더 |
+| **장애물 원** (중심 = 추정 위치, 반지름 = 추정 반지름) | `/obstacles_safe` | 10 Hz |
+| **장애물 속도 화살표** (1초 뒤 위치) | `/obstacles_safe` | 10 Hz |
+| 좌상단 배너 (`ok` / `STALE` / 소스별 나이) | 수신 시각 | 매 프레임 |
+
+**2026-08-10에 이 그림을 실제로 재현해서 검증했습니다** — Foxy가 Fast DDS로
+보낸 토픽을 문서에 적힌 그 명령(`ros2 launch dpcbf_plot_client
+dpcbf_plot_client.launch.py`)으로 띄운 pyqtgraph 창에서, 32초 동안 로봇과
+장애물이 계속 움직이는 것을 스크린샷 3장으로 확인했습니다 (§7).
+
+> **오른쪽 시계열 5개는 이번 세션에서 빈 화면이 정상입니다.** 그것은 장애물
+> 플롯이 아니라 **제어기 내부값**(`/dpcbf/plot`: nominal/safe command,
+> intervention, min_h)이고, 로봇에는 DPCBF control seam이 아직 없습니다.
+> **왼쪽 화면 = 이번 실험의 본체**이고 그것은 전부 동작합니다.
+
+---
+
 **무엇이 바뀌었나 (한 줄)**: 미들웨어를 **CycloneDDS → Fast DDS
 (`rmw_fastrtps_cpp`)** 로 바꿉니다. Fast DDS는 **Foxy와 Humble의 기본
 미들웨어**라 어느 쪽에도 새로 설치할 것이 없고, NIC 이름을 설정할 필요가
@@ -733,7 +760,19 @@ ros2 launch dpcbf_plot_client dpcbf_plot_client.launch.py \
 | `plot_topic` | `/dpcbf/plot` | 리허설에서 일부러 없는 이름으로 돌릴 때 (§3-4) |
 | `synthetic` | `off` | **실기에서는 절대 `on` 금지** — 가짜 `/odom`을 publish합니다 |
 
-#### ④ 화면 구성
+#### ④ 창이 뜨면 — **이게 라이브인지 어떻게 아는가**
+
+띄운 직후 30초 동안 아래 세 가지를 눈으로 확인하십시오. 하나라도 아니면
+멈춘 화면을 보고 있는 것입니다.
+
+1. 배너의 `odom: ok NNms` 숫자가 **계속 바뀐다** (수십 ms 대에서 깜빡임)
+2. 로봇 앞에서 사람이 걸어가면 **원이 따라 움직이고 화살표 방향이 바뀐다**
+3. 로봇을 움직이면 **trail 선이 자란다** (정지 실험이면 점 하나로 유지 = 정상)
+
+갱신률: GUI 25 Hz, `/odom` 100 Hz 수신, `/obstacles_safe` 10 Hz 수신.
+즉 장애물 원은 **초당 10번** 새 위치로 갱신됩니다.
+
+#### ⑤ 화면 구성
 
 ```
 +------------------------------+---------------------------------+
@@ -747,21 +786,28 @@ ros2 launch dpcbf_plot_client dpcbf_plot_client.launch.py \
         (왼쪽 = 이번 실험의 본체)      (오른쪽 = 이번엔 전부 빈 화면)
 ```
 
-#### ⑤ 화면 읽는 법 — **이번 실기 기준**
+#### ⑥ 화면 읽는 법 — **이번 실기 기준**
 
-**좌상단 배너** (초록 = 정상, 빨강 = 문제):
+**좌상단 배너 — 이 3줄이 이번 세션의 계기판입니다.** 정상이면 **초록**:
 
 ```
-dpcbf/plot: NO DATA          <- ★ 정상입니다 (아래 설명)
-odom: ok 12ms
-obstacles_safe: ok 47ms
+dpcbf/plot: NO DATA (no publisher)     <- ★ 정상. 초록이면 됩니다
+odom: ok 4ms
+obstacles_safe: ok 82ms
 ```
 
 | 배너 줄 | 정상값 | 아니면 |
 |---|---|---|
-| `dpcbf/plot` | **`NO DATA`** | 실기에는 DPCBF control seam이 없습니다. `deploy/g1_ctrl`에 dpcbf 참조가 0건이고, `DpcbfVizPublisher`를 만드는 곳은 MuJoCo 시뮬레이터뿐입니다 |
+| `dpcbf/plot` | **`NO DATA (no publisher)`** | 실기에는 DPCBF control seam이 없습니다. `deploy/g1_ctrl`에 dpcbf 참조가 0건이고, `DpcbfVizPublisher`를 만드는 곳은 MuJoCo 시뮬레이터뿐입니다 |
 | `odom` | `ok` + 수십 ms | `NO DATA` → 링크 문제(§6-1) 또는 C2에서 DLIO가 안 도는 것 |
 | `obstacles_safe` | `ok` + 100 ms 이내 | `NO DATA` → `/scan`이 비었거나 검출기가 안 돎(§5-2의 체인) |
+
+> **배너 색이 실기의 유일한 at-a-glance 신호입니다.** 2026-08-10 수정 전에는
+> `/dpcbf/plot`이 없다는 이유만으로 배너가 **세션 내내 빨강**이었습니다 —
+> 그러면 정작 `/odom`이 끊겼을 때 색이 안 바뀌어 알아챌 수 없습니다. 이제
+> **한 번도 publisher가 없었던 소스**(= 이번 세션의 `/dpcbf/plot`)는 색 판정에서
+> 빠지고, `/odom`·`/obstacles_safe`가 끊기면 **즉시 빨강 + `STALE n.ns`** 로
+> 바뀝니다. **실험 중에는 배너가 초록인지만 흘끔 보면 됩니다.**
 
 > 배너의 숫자는 **노트북이 마지막으로 그 토픽을 받은 뒤 흐른 시간**입니다.
 > 두 컴퓨터의 시계가 안 맞아도 의미가 있는 값입니다(수신 시각 기준).
@@ -804,7 +850,7 @@ obstacles_safe: ok 47ms
 | barrier: min h / min clearance | 배리어 값과 최근접 표면 거리. `h<0` = 제약 위반 |
 | obstacle age / plot latency | 제어측이 본 장애물 나이 / 메시지 지연(NTP 필요) |
 
-#### ⑥ 조작
+#### ⑦ 조작
 
 | 하고 싶은 것 | pyqtgraph | matplotlib |
 |---|---|---|
@@ -816,13 +862,13 @@ obstacles_safe: ok 47ms
 > **스크린샷은 evidence입니다.** 판단 근거가 된 화면은 반드시 저장해서
 > `$SESSION`에 넣으십시오. 시스템 스크린샷(`PrtSc`)도 무방합니다.
 
-#### ⑦ 종료
+#### ⑧ 종료
 
 `Ctrl-C` (터미널) 또는 창 닫기. **Computer 2에는 아무 영향이 없습니다** —
 클라이언트는 subscribe 전용이고 모든 구독이 BestEffort라, 죽든 Wi-Fi가
 끊기든 perception 파이프라인은 그대로 돕니다.
 
-#### ⑧ GUI가 안 뜰 때
+#### ⑨ GUI가 안 뜰 때
 
 | 증상 | 원인 / 조치 |
 |---|---|
@@ -958,18 +1004,43 @@ payload도 필드 단위로 확인: 중첩 가변 배열 `PlotObstacle[]` 2개, 
 | 회귀 | `test_hw_offline_gates.py` | 281 passed / 2 failed (§6-5의 그 2개) |
 | 회귀 | `dpcbf_plot_client` pytest | 8/8 passed |
 
-### ✅ 플롯 클라이언트 — 실기 형태 렌더링 수정
+### ✅ **라이브 GUI** — 실제 창을 32초 띄워 놓고 확인
 
-control sample이 없는(=실기) 스냅샷 한 프레임을 두 백엔드에 통과시켜,
-`/obstacles_safe` 장애물 2개(원) + 움직이는 1개의 **속도 화살표**가 실제로
-그려지는 것을 확인했습니다 (pyqtgraph 3 items / matplotlib 3 artists, 정지
-장애물에는 화살표 없음 = 의도대로). 실기 형태 launch도 headless로 기동 확인:
+한 프레임 렌더가 아니라, **문서에 적힌 그 명령 그대로** 실제 pyqtgraph 창을
+띄워 두고 시간에 따라 갱신되는지 확인했습니다.
 
-```bash
-ros2 launch dpcbf_plot_client dpcbf_plot_client.launch.py \
-    synthetic:=on plot_topic:=/dpcbf/plot_disabled
-# -> plot backend: pyqtgraph, 예외 없음
+- publisher: Foxy 컨테이너(독립 netns = 다른 호스트), Fast DDS,
+  `synthetic_dpcbf_publisher --ros-args -p plot_topic:=/dpcbf/plot_no_seam`
+  → 클라이언트 입장에서 **control seam 없음 = 실기와 동일한 형태**
+- subscriber: 호스트 Humble, X 서버(Xvfb :99) 위에서
+  `ros2 launch dpcbf_plot_client dpcbf_plot_client.launch.py`
+  → 로그 `plot backend: pyqtgraph`, 예외 없음
+- 12 s / 22 s / 32 s 시점에 화면 캡처
+
+| t | 로봇 위치 | 이동 장애물 | 배너 |
+|---|---|---|---|
+| 12 s | (−6.4, 3.2) | (−6.4, 4.2) | 초록 `odom: ok 8ms` `obstacles_safe: ok 66ms` |
+| 22 s | (−8.0, 0.6) | (−7.0, 1.7) | 초록 `ok 7ms` / `ok 47ms` |
+| 32 s | (−7.3, −2.3) | (−5.3, −1.3) | 초록 `ok 7ms` / `ok 65ms` |
+
+로봇이 원호를 그리며 trail이 자라고, 장애물 원이 매번 다른 자리에 그려지고,
+정지 장애물(2.0, 1.5)은 제자리에 남습니다 = **라이브 갱신 확인.**
+
+**끊김 감지도 확인**: publisher를 죽이고 5초 뒤 캡처하면 창은 계속 돌면서
+배너만 빨강으로 바뀝니다 — 멈춘 창이 아니라 **끊겼다고 말해주는 창**입니다.
+
+![링크가 끊긴 상태](img/plot_client_live_stale.png)
+
 ```
+dpcbf/plot: NO DATA (no publisher)
+odom: STALE 5.1s
+obstacles_safe: STALE 5.1s
+```
+
+이 과정에서 수정 2건이 나왔습니다: ⓐ `/obstacles_safe` 장애물이 연한 보조
+레이어로만 그려지고 속도 화살표가 아예 없던 것, ⓑ `/dpcbf/plot` 부재만으로
+배너가 세션 내내 빨강이라 진짜 끊김을 구분할 수 없던 것. 두 백엔드 모두 수정,
+`dpcbf_plot_client` pytest 8/8.
 
 ### ⚠ 아직 확인되지 않은 것 (현장 변수)
 

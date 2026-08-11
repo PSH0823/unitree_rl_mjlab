@@ -256,10 +256,19 @@ class PlotApp:
         lines = []
         any_stale = False
 
-        def describe(name, key):
+        # `optional` sources are allowed to have never appeared: the DPCBF
+        # control seam does not exist on the robot yet, so /dpcbf/plot is
+        # absent for a whole perception session. Colouring the banner red for
+        # that would leave it red from the first frame to the last, and a real
+        # /odom dropout — the thing this banner exists to catch — would not
+        # stand out at all. A source that HAS been seen and then stops is
+        # still a regression and still turns the banner red.
+        def describe(name, key, optional=False):
             nonlocal any_stale
             age = ages[key]
             if age is None:
+                if optional:
+                    return f'{name}: NO DATA (no publisher)'
                 any_stale = True
                 return f'{name}: NO DATA'
             if age > stale_after:
@@ -267,7 +276,7 @@ class PlotApp:
                 return f'{name}: STALE {age:.1f}s'
             return f'{name}: ok {age * 1e3:.0f}ms'
 
-        lines.append(describe('dpcbf/plot', 'plot'))
+        lines.append(describe('dpcbf/plot', 'plot', optional=True))
         lines.append(describe('odom', 'odom'))
         if snap['obstacles_available']:
             lines.append(describe('obstacles_safe', 'obstacles'))
