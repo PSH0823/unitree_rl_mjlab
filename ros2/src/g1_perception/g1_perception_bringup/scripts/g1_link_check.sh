@@ -63,6 +63,17 @@ check_env() {
   fi
   [ -n "${CYCLONEDDS_URI:-}" ] && warn "CYCLONEDDS_URI is still set - inert under Fast DDS, but it means some other setup script also ran here"
 
+  # Not a link variable, but the one that is most often copied verbatim from
+  # the OTHER machine's setup notes - and a wrong value makes every later
+  # `cd "$G1_WS"` fail somewhere the operator is not looking.
+  if [ -n "${G1_WS:-}" ]; then
+    if [ -r "$G1_WS/deps.repos" ]; then
+      ok "G1_WS=$G1_WS"
+    else
+      fail "G1_WS=$G1_WS has no deps.repos - this is not the workspace on THIS machine (the two computers cloned to different paths)"
+    fi
+  fi
+
   say "3. interfaces"
   ip -br addr 2>/dev/null | awk '$2=="UP"||$2=="UNKNOWN"{printf "         %-14s %-8s %s\n",$1,$2,$3}'
   printf '         (Fast DDS uses ALL of these; no interface name has to be configured)\n'

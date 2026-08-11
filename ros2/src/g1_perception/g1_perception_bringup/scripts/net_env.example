@@ -31,6 +31,15 @@ export ROS_LOCALHOST_ONLY=0
 # but leaving them set makes every later diagnosis ambiguous. Drop them.
 unset CYCLONEDDS_URI
 
+# --- convenience: this machine's workspace ---------------------------------
+# Not a ROS variable - it exists so the runbook's copy-paste blocks can say
+# `cd "$G1_WS"` on both machines. The VALUE DIFFERS PER MACHINE: the onboard PC
+# and the laptop cloned the repo to different places. Confirm it, do not copy
+# the other machine's line:
+#     cd <wherever you cloned>/ros2 && pwd
+#     ls "$G1_WS/deps.repos"        # must exist
+export G1_WS=$HOME/unitree_rl_mjlab/ros2
+
 # --- optional: only when multicast is blocked on the network ---------------
 # The IP of the OTHER computer on the link (on Computer 2: Computer 3's IP;
 # on Computer 3: Computer 2's IP). Used by

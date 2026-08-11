@@ -205,17 +205,46 @@ tmux new -s g1          # 'g1'이라는 세션 생성 + 진입
 3. 새 터미널/새 pane을 열었으면 **§2-3 (C2) 또는 §3-3 (C3)의 "3줄 블록"을
    먼저 붙여넣기.**
 
+### 1.6 ★ 두 컴퓨터에서 **같아야 하는 값 / 달라야 하는 값**
+
+`~/.g1_net_env`는 **머신마다 따로** 만듭니다. 같은 파일을 복사해서 쓰면 안 되는
+줄이 있습니다.
+
+| 변수 | Computer 2 (G1 온보드) | Computer 3 (노트북) | |
+|---|---|---|---|
+| `ROS_DOMAIN_ID` | `7` | `7` | **반드시 같음** — 다르면 서로를 못 봅니다 |
+| `RMW_IMPLEMENTATION` | `rmw_fastrtps_cpp` | `rmw_fastrtps_cpp` | **반드시 같음** — 벤더가 다르면 절대 안 통합니다 |
+| `ROS_LOCALHOST_ONLY` | `0` | `0` | 둘 다 0 |
+| **`G1_WS`** | `/home/unitree/dyros_ws/sanghyuk_ws/unitree_rl_mjlab/ros2` (08-07 현장 값) | 노트북에 clone한 경로 (예: `/home/<user>/unitree_rl_mjlab/ros2`) | **다릅니다.** 각 머신에서 실제 경로를 확인해서 넣을 것 |
+| **`G1_PEER_IP`** | Computer **3**의 IP | Computer **2**의 IP | **서로 반대입니다.** peers 모드(§4-2)에서만 필요 |
+
+> `G1_WS`는 ROS 변수가 아니라 이 문서의 복붙 블록을 짧게 쓰기 위한 것입니다.
+> 틀려도 DDS는 멀쩡하지만 `cd`가 실패해서 엉뚱한 디렉토리에서 명령이 돕니다 —
+> 각 절의 확인 명령(`ls "$G1_WS/deps.repos"`)을 꼭 거치십시오.
+
 ---
 
 ## 2. Computer 2 준비 (G1 온보드, Foxy)
 
-> 저장소 경로가 기본과 다릅니다. 현장 머신은
-> `/home/unitree/dyros_ws/sanghyuk_ws/unitree_rl_mjlab` 였습니다.
-> 아래에서는 `$G1_WS`로 씁니다 — §2-1에서 한 번 정의합니다.
+> 저장소 경로가 기본과 다릅니다. 08-07 현장 머신은
+> `/home/unitree/dyros_ws/sanghyuk_ws/unitree_rl_mjlab` 였습니다
+> (커밋 `e20f662`의 `.vscode/settings.json`에 남아 있는 값).
+> 아래에서는 `$G1_WS`로 씁니다 — §2-1에서 한 번 정의하고, **Computer 3의
+> 값과는 다릅니다** (§1.6).
 
 ### 2-1. 환경 파일 만들기 (**어제 실패한 부분**)
 
 **터미널: T1 / 실행 위치: 홈 디렉토리**
+
+**먼저 이 머신의 실제 경로를 확인**하십시오 (추측하지 말 것):
+
+```bash
+cd /home/unitree/dyros_ws/sanghyuk_ws/unitree_rl_mjlab/ros2 && pwd
+# 경로가 다르면:
+find /home -maxdepth 6 -name deps.repos -path "*/ros2/*" 2>/dev/null
+```
+
+찍힌 경로를 아래 `G1_WS`에 넣습니다:
 
 ```bash
 cd ~
@@ -224,17 +253,21 @@ export ROS_DOMAIN_ID=7
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ROS_LOCALHOST_ONLY=0
 unset CYCLONEDDS_URI
-export G1_WS=/home/unitree/dyros_ws/sanghyuk_ws/unitree_rl_mjlab/ros2
+export G1_WS=/home/unitree/dyros_ws/sanghyuk_ws/unitree_rl_mjlab/ros2   # ★ 위에서 확인한 값
 #export G1_PEER_IP=192.168.0.xxx     # Computer 3의 IP. §4-2에서 필요하면 켬
 EOF
 ```
 
-`G1_WS`는 본인 경로로 고치십시오. 확인:
+확인:
 
 ```bash
 source ~/.g1_net_env
-ls "$G1_WS/install"        # 디렉토리가 보여야 함
+ls "$G1_WS/deps.repos" && ls -d "$G1_WS/install"   # 둘 다 보여야 함
 ```
+
+`No such file or directory`가 나오면 `G1_WS`가 틀린 것입니다. 그대로 진행하면
+이후 모든 `cd "$G1_WS"`가 실패하고, 엉뚱한 디렉토리에서 `source
+install/setup.bash`가 돌아 **"빌드했는데 패키지가 없다"** 로 보입니다.
 
 **이제 `~/.bashrc` 맨 아래에 한 줄 추가** — 이래야 새 터미널/새 pane에서
 잊어버릴 수 없습니다:
@@ -353,9 +386,22 @@ echo "EXIT=$?"
 
 ## 3. Computer 3 준비 (노트북, Humble)
 
-### 3-1. 환경 파일 (C2와 **같은 도메인**)
+### 3-1. 환경 파일 (C2와 **같은 도메인**, **다른 경로**)
 
 **터미널: T4 / 실행 위치: 홈 디렉토리**
+
+> ⚠ **`G1_WS`는 §2-1의 Computer 2 값을 그대로 쓰면 안 됩니다.** 두 컴퓨터는
+> 저장소를 각자 다른 곳에 clone했습니다. §1.6의 표를 보십시오.
+
+**먼저 이 노트북의 실제 경로를 확인**하십시오 (추측하지 말 것):
+
+```bash
+cd ~/unitree_rl_mjlab/ros2 && pwd      # 여기에 clone했다면 이 경로가 찍힘
+# 어디에 뒀는지 기억이 안 나면:
+find ~ -maxdepth 4 -name deps.repos -path "*/ros2/*" 2>/dev/null
+```
+
+찍힌 경로를 아래 `G1_WS`에 그대로 넣습니다:
 
 ```bash
 cd ~
@@ -364,17 +410,24 @@ export ROS_DOMAIN_ID=7                 # ★ Computer 2와 반드시 같은 값
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ROS_LOCALHOST_ONLY=0
 unset CYCLONEDDS_URI
-export G1_WS=$HOME/unitree_rl_mjlab/ros2
+export G1_WS=<위에서 확인한 경로>      # ★ Computer 2와 다릅니다
 #export G1_PEER_IP=192.168.123.164     # Computer 2의 IP. §4-2에서 필요하면 켬
 EOF
 
 echo '[ -f ~/.g1_net_env ] && . ~/.g1_net_env' >> ~/.bashrc
 ```
 
-**새 터미널을 열어** 확인:
+**새 터미널을 열어** 확인 — 네 가지가 다 맞아야 합니다:
+
 ```bash
 printenv ROS_DOMAIN_ID RMW_IMPLEMENTATION ROS_LOCALHOST_ONLY | tr '\n' ' '; echo
+ls "$G1_WS/deps.repos"                 # 이 파일이 보이면 경로가 맞습니다
 ```
+→ `7 rmw_fastrtps_cpp 0` + `deps.repos` 한 줄.
+
+`ls`가 `No such file or directory`면 `G1_WS`가 틀린 것입니다. **이 상태로
+진행하면 `cd "$G1_WS"`가 실패하고 그 다음 `source install/setup.bash`가
+엉뚱한 디렉토리에서 돌아, "빌드했는데 패키지가 없다"로 보입니다.**
 
 ### 3-2. 빌드 — **3개 패키지** (실측 16초)
 
