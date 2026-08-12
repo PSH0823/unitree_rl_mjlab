@@ -21,6 +21,12 @@
   <depend>dpcbf_viz_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
+  <!-- dpcbf_scan_view: the laser it draws, and the odom->robot lookup that
+       puts the odom-frame circles back on top of it. obstacle_detector stays
+       an optional IMPORT (as in data_hub) so a minimal Computer 3 install
+       still runs, scan-only. -->
+  <depend>sensor_msgs</depend>
+  <depend>tf2_ros</depend>
 
   <!-- pyqtgraph is the primary backend; matplotlib the fallback. Both are
        exec-only: the data path imports neither. -->

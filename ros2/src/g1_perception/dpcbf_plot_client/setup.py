@@ -31,6 +31,11 @@ setup(
             'dpcbf_plot_client = dpcbf_plot_client.plot_client_main:main',
             'synthetic_dpcbf_publisher = '
             'dpcbf_plot_client.synthetic_publisher:main',
+            # Robot-frame /scan + fitted circles. Separate entry point rather
+            # than a backend of the one above: different question (is the FIT
+            # noisy?), different frame, and it must stay runnable when the
+            # control seam is absent.
+            'dpcbf_scan_view = dpcbf_plot_client.scan_view:main',
         ],
     },
 )
