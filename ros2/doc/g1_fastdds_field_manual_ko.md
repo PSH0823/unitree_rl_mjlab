@@ -94,8 +94,8 @@ export ROS_LOCALHOST_ONLY=0
 ```
 
 파일을 `source` 하는 것만으로 링크에 올라갑니다. **번역 스크립트가
-없어도 동작합니다.** 그리고 `~/.bashrc`에서 이 파일을 읽게 해서, 새 터미널·새
-tmux pane에서 **잊어버릴 수 없게** 만듭니다 (§2-1).
+없어도 동작합니다.** 그리고 `~/.bashrc`에서 이 파일을 읽게 해서, **새 터미널을
+몇 개를 열든 자동으로 적용**되게 만듭니다 (§2-1).
 
 ### 원인 ②  `viz_env_computer2.sh`를 source 해도 조용히 실패했을 가능성이 높다
 
@@ -174,7 +174,9 @@ ros2 topic list --no-daemon
 - 이미 열린 터미널에서 **`Ctrl` + `Shift` + `T`** → 새 탭
 - 탭 이동: **`Alt` + `1`, `Alt` + `2`, …**
 
-**터미널 5개를 그냥 5번 열면 됩니다.** tmux를 꼭 써야 하는 것은 아닙니다.
+**터미널 5개를 그냥 5번 열면 됩니다. tmux는 쓰지 않습니다.**
+창 5개를 띄워 놓고 §1.1 표대로 하나씩 역할을 정하십시오. 헷갈리지 않게 각
+터미널의 첫 명령으로 `hostname`을 치는 것을 권합니다.
 
 ### 1.3 Computer 2에 SSH로 붙는 법
 
@@ -191,45 +193,37 @@ ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4 unitree@<Computer2의 IP>
 hostname          # 지금 내가 어느 컴퓨터에 있는지 (헷갈리면 언제나 이것)
 ```
 
-### 1.4 tmux — **스택을 띄우는 T1에는 쓰는 것을 권장**
+### 1.4 tmux를 안 쓰므로 — **SSH 터미널만 끊기지 않게 하면 됩니다**
 
-SSH가 끊기면 그 터미널에서 돌던 프로세스는 **같이 죽습니다.** perception
-스택(T1)과 bag 녹화(T3)는 그러면 실험이 날아갑니다. tmux 안에서 돌리면
-SSH가 끊겨도 **서버 쪽에 살아 있고**, 다시 붙으면 그대로 이어집니다.
+이 세션은 평범한 SSH 터미널 5개로 진행합니다. 대신 **SSH가 끊기면 그 터미널에서
+돌던 것이 같이 죽습니다** (T1의 스택, T3의 bag 녹화). 끊기지 않게 하는 것만
+지키면 됩니다:
 
-```bash
-# [Computer 2에 SSH로 들어온 직후]
-tmux new -s g1          # 'g1'이라는 세션 생성 + 진입
-```
+- [ ] `ssh` 명령에 §1.3의 **`ServerAliveInterval` 옵션**을 붙일 것
+- [ ] 노트북 **절전/화면잠금 끄기** — Settings → Power → *Blank screen: Never*,
+      *Automatic suspend: Off*. **실험 중 노트북이 잠들면 SSH 3개가 한 번에
+      끊깁니다** (가장 흔한 사고)
+- [ ] **뚜껑을 닫지 말 것**
+- [ ] 가능하면 SSH는 **유선 이더넷**으로 (Wi-Fi는 DDS 링크만 쓰게)
+- [ ] T1(스택) · T3(bag) 터미널은 **아무것도 치지 말고 그냥 둘 것** —
+      실수로 `Ctrl-C`가 들어가면 그 자리에서 끝납니다
 
-화면 아래에 초록색 상태줄이 생기면 tmux 안입니다.
+> **그래도 끊겼다면**: 스택과 bag은 죽습니다. 다시 SSH로 붙어서
+> §5-1(스택) → §5-3(bag) 순서로 다시 띄우십시오. 그때까지 녹화된 bag은
+> `metadata.yaml`이 안 쓰여서 **열리지 않을 수 있습니다** — 끊긴 시점 이후는
+> 새 bag으로 다시 받는다고 생각하는 편이 안전합니다.
 
-| 하고 싶은 것 | 키 |
-|---|---|
-| tmux에서 **빠져나오기** (프로세스는 계속 돎) | `Ctrl-b` 누르고 손 뗀 뒤 `d` |
-| 다시 **들어가기** | `tmux attach -t g1` |
-| 세션 목록 | `tmux ls` |
-| 창 가로 분할 | `Ctrl-b` → `"` |
-| 창 세로 분할 | `Ctrl-b` → `%` |
-| pane 이동 | `Ctrl-b` → 방향키 |
-| pane 번호 표시 | `Ctrl-b` → `q` |
-| 현재 pane 닫기 | 그 pane에서 `exit` |
-| 세션 통째로 죽이기 | `tmux kill-session -t g1` |
-
-> **`Ctrl-b`는 "동시에"가 아닙니다.** `Ctrl`+`b`를 눌렀다 **떼고**, 그 다음에
-> `"`나 `%`나 방향키를 누릅니다.
-
-> ⚠ **tmux의 함정 하나**: 새 pane은 **tmux 서버가 처음 시작될 때의 환경**을
-> 물려받습니다. 그래서 pane마다 `source`를 다시 해 줘야 합니다 — 이번 판은
-> §2-1에서 `~/.bashrc`에 넣기 때문에 **새 pane도 자동으로 환경을 갖습니다.**
-> 다만 워크스페이스 `install/setup.bash`는 여전히 pane마다 필요합니다.
+> 새 터미널을 열 때마다 환경을 다시 잡아야 하는 문제는 §2-1에서
+> `~/.bashrc`에 한 줄 넣는 것으로 해결됩니다 — 새 터미널이 자동으로
+> `ROS_DOMAIN_ID` / `RMW_IMPLEMENTATION`을 갖습니다. 워크스페이스
+> `install/setup.bash`만 터미널마다 다시 `source`하면 됩니다 (§2-3 / §3-3).
 
 ### 1.5 헷갈리지 않는 규칙 3개
 
 1. 명령을 치기 전에 **`hostname`** — 지금 C2인지 C3인지.
 2. 명령을 치기 전에 **`pwd`** — 이 문서의 모든 블록은 실행 디렉토리를
    명시합니다.
-3. 새 터미널/새 pane을 열었으면 **§2-3 (C2) 또는 §3-3 (C3)의 "3줄 블록"을
+3. 새 터미널을 열었으면 **§2-3 (C2) 또는 §3-3 (C3)의 "3줄 블록"을
    먼저 붙여넣기.**
 
 ### 1.6 ★ 두 컴퓨터에서 **같아야 하는 값 / 달라야 하는 값**
@@ -296,7 +290,7 @@ ls "$G1_WS/deps.repos" && ls -d "$G1_WS/install"   # 둘 다 보여야 함
 이후 모든 `cd "$G1_WS"`가 실패하고, 엉뚱한 디렉토리에서 `source
 install/setup.bash`가 돌아 **"빌드했는데 패키지가 없다"** 로 보입니다.
 
-**이제 `~/.bashrc` 맨 아래에 한 줄 추가** — 이래야 새 터미널/새 pane에서
+**이제 `~/.bashrc` 맨 아래에 한 줄 추가** — 이래야 새 터미널에서
 잊어버릴 수 없습니다:
 
 ```bash
@@ -315,6 +309,15 @@ printenv ROS_DOMAIN_ID RMW_IMPLEMENTATION ROS_LOCALHOST_ONLY
 rmw_fastrtps_cpp
 0
 ```
+
+> **이 방식이 tmux 없이도 되는 이유** (2026-08-10 실측): Ubuntu의 기본
+> `~/.profile`이 bash일 때 `~/.bashrc`를 불러 주므로, **SSH로 접속한 로그인
+> 셸**과 **노트북에서 새로 연 터미널 창** 양쪽 모두에서 세 변수가 그대로
+> 나옵니다. 터미널을 몇 개를 열든 매번 잡힙니다.
+>
+> 예외 하나: `ssh <host> '<명령>'` 처럼 **접속 없이 명령만 던지는 경우**는
+> 대화형 셸이 아니라서 적용되지 않습니다. 그럴 때만 명령 앞에
+> `ROS_DOMAIN_ID=7 RMW_IMPLEMENTATION=rmw_fastrtps_cpp` 를 직접 붙이십시오.
 
 > ⚠ **`RMW_IMPLEMENTATION`을 `.bashrc`에 넣는 것의 부작용**: 이 머신에서
 > CycloneDDS를 쓰는 **다른 ROS 작업**(`unitree_ros2` 같은 것)이 있으면 그
@@ -336,7 +339,7 @@ colcon build --packages-select g1_perception_bringup
 (어제는 `rmw_cyclonedds_cpp`가 아니면 HARD FAIL이라 preflight를 통과할 수
 없었습니다), `net_env.sh` / `g1_link_check.sh`가 추가됐습니다.
 
-### 2-3. **모든 새 터미널/pane에서 붙여넣는 3줄 블록**
+### 2-3. **모든 새 터미널에서 붙여넣는 3줄 블록**
 
 ```bash
 cd "$G1_WS"

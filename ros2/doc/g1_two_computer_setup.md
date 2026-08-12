@@ -25,6 +25,10 @@ Mid-360 LiDAR 연결 → DLIO 오도메트리 → 장애물 검출·추적 → *
 > **이 문서에서 계속 쓰는 부분**: A-1~A-8 (사전확인·apt·clone·외부소스·빌드·
 > LiDAR IP 탐색·`MID360_config.json`), A-10 preflight, A-11 단계별 기동,
 > A-12 Foxy 주의사항, D-3~D-5, Part F, 부록 2.
+>
+> **터미널 운용도 대체됩니다**: 이 문서의 tmux 절차(Part A 머리말, D-0,
+> A-11의 "새 pane마다 env 블록")는 쓰지 않습니다. 새 매뉴얼은 **tmux 없이
+> 평범한 터미널 5개**로 진행하고, 환경은 `~/.bashrc`가 잡아 줍니다.
 
 > 기존 [`README.md`](README.md)(3대 구성: Blackbox가 `/livox/*`를 주는 구성)와
 > 달리, 이 문서는 **Mid-360을 Computer 2에 직접 물리는 2대 구성**입니다.
