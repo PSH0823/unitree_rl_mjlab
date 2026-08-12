@@ -19,12 +19,20 @@ WHY THIS EXISTS, given dpcbf_plot_client already draws obstacles.
     parameters vs §9.3/§9.4 crop and projection). With scan_history > 1 the
     last N scans are overdrawn fainter, so scan jitter is visible directly.
 
-FRAMES. /scan is already robot-fixed: pointcloud_to_laserscan runs with
-target_frame=base_footprint (§9.4). The obstacle topics are odom-frame
-(§7.1) — the extractor transforms them there. So the circles are transformed
-BACK, at the message stamp rather than `latest`, exactly as
-hw_obstacle_watch.py does it. target_frame:='' (the default) means "whatever
-frame /scan arrives in"; set it explicitly to compare against odom.
+FRAMES. Everything is drawn in target_frame, base_link by default. /scan
+arrives in whatever pointcloud_to_laserscan was configured to emit —
+base_footprint (§9.4) normally, or mid360_link when its target_frame is left
+empty to keep odometry out of the projection path. The obstacle topics are
+odom-frame (§7.1): the extractor transforms them there, and this view
+transforms them back, at the message stamp rather than `latest`, exactly as
+hw_obstacle_watch.py does it.
+
+Rotations are applied in FULL, never reduced to a yaw. mid360_link carries
+roll = pi — the sensor is mounted upside-down — so a yaw-only reduction
+mirrors the picture about the robot's forward axis while looking entirely
+plausible. target_frame:='' means "whatever frame /scan arrives in", which
+reproduces that mirroring when the scan is sensor-framed; set it to odom to
+compare against the world view.
 
 Requires /tf and /tf_static to reach this machine. If they do not, the scan
 still draws and the banner says the circles are missing — that is a link
@@ -69,9 +77,34 @@ def _best_effort(depth=1):
                       history=QoSHistoryPolicy.KEEP_LAST, depth=depth)
 
 
-def _yaw_of(q):
-    return math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                      1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+def _rotate(tf, v):
+    """Rotate the 3-vector v by tf's rotation. No translation — velocities.
+
+    The rotation is applied IN FULL rather than reduced to a yaw. Reducing it
+    is safe only between frames that differ by a yaw and a translation, which
+    base_footprint and odom do — but mid360_link does not: it carries roll = pi
+    (the sensor is mounted upside-down, g1_mid360.xacro). A yaw-only reduction
+    silently drops the y flip, which mirrors every circle about the robot's
+    forward axis. hw_obstacle_watch.py rotates in full for the same reason.
+    """
+    qx, qy, qz, qw = tf[0], tf[1], tf[2], tf[3]
+    x, y, z = v
+    tx = 2.0 * (qy * z - qz * y)
+    ty = 2.0 * (qz * x - qx * z)
+    tz = 2.0 * (qx * y - qy * x)
+    return (x + qw * tx + (qy * tz - qz * ty),
+            y + qw * ty + (qz * tx - qx * tz),
+            z + qw * tz + (qx * ty - qy * tx))
+
+
+def _apply(tf, v):
+    """Full rigid transform of the 3-vector v; returns the (x, y) it lands on."""
+    x, y, _z = _rotate(tf, v)
+    return (x + tf[4], y + tf[5])
+
+
+#            qx   qy   qz   qw    tx   ty   tz
+_IDENTITY = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
 
 
 class ScanViewHub(Node):
@@ -83,7 +116,14 @@ class ScanViewHub(Node):
         self.obstacle_topics = list(self.declare_parameter(
             'obstacle_topics',
             ['/raw_obstacles', '/tracked_obstacles', '/obstacles_safe']).value)
-        self.target_frame = self.declare_parameter('target_frame', '').value
+        # base_link, not the scan's own frame: /scan may arrive in
+        # mid360_link (pointcloud_to_laserscan target_frame:='' on the
+        # hanging-test config), and that frame is upside-down, so drawing in
+        # it puts left on the right. base_link needs only the static chain
+        # from robot_state_publisher when the scan is already sensor-framed.
+        # '' still means "whatever frame /scan arrives in".
+        self.target_frame = self.declare_parameter(
+            'target_frame', 'base_link').value
         self.tf_timeout = float(
             self.declare_parameter('tf_timeout', 0.05).value)
         self.scan_history = max(
@@ -136,8 +176,8 @@ class ScanViewHub(Node):
             self._rx[topic] = time.monotonic()
 
     # ------------------------------------------------------------------
-    def _transform_2d(self, source_frame, target_frame, stamp):
-        """(dx, dy, yaw) taking a point in source_frame to target_frame.
+    def _lookup(self, source_frame, target_frame, stamp):
+        """(qx,qy,qz,qw,tx,ty,tz) taking a point in source_frame to target.
 
         Looked up AT THE MESSAGE STAMP: with the robot swaying on a stand,
         `latest` would pair a 100 ms-old obstacle with the current pose and
@@ -146,7 +186,7 @@ class ScanViewHub(Node):
         slightly wrong picture instead of a blank one — and says so.
         """
         if not source_frame or source_frame == target_frame:
-            return (0.0, 0.0, 0.0), None
+            return _IDENTITY, None
         timeout = Duration(seconds=self.tf_timeout)
         try:
             tr = self._tf_buffer.lookup_transform(
@@ -160,8 +200,8 @@ class ScanViewHub(Node):
             except tf2_ros.TransformException:
                 return None, f'no tf {source_frame}->{target_frame}: ' \
                              f'{type(exc).__name__}'
-        t = tr.transform.translation
-        return (t.x, t.y, _yaw_of(tr.transform.rotation)), note
+        q, t = tr.transform.rotation, tr.transform.translation
+        return (q.x, q.y, q.z, q.w, t.x, t.y, t.z), note
 
     def snapshot(self):
         """Everything the renderer needs, already in the target frame."""
@@ -176,23 +216,25 @@ class ScanViewHub(Node):
         circles = {t: [] for t in self.obstacle_topics}
 
         if target and scan_frame and target != scan_frame:
-            tf, note = self._transform_2d(scan_frame, target, rclpy.time.Time().to_msg())
+            tf, note = self._lookup(scan_frame, target, Time().to_msg())
             if tf is None:
                 scans = []
             else:
-                scans = [[_apply(tf, p) for p in pts] for pts in scans]
+                scans = [[_apply(tf, (p[0], p[1], 0.0)) for p in pts]
+                         for pts in scans]
 
         for topic, msg in msgs.items():
             if msg is None or target is None:
                 continue
-            tf, n = self._transform_2d(msg.header.frame_id, target,
-                                       msg.header.stamp)
+            tf, n = self._lookup(msg.header.frame_id, target,
+                                 msg.header.stamp)
             note = note or n
             if tf is None:
                 continue
             for c in msg.circles:
-                x, y = _apply(tf, (c.center.x, c.center.y))
-                vx, vy = _rotate(tf[2], (c.velocity.x, c.velocity.y))
+                x, y = _apply(tf, (c.center.x, c.center.y, c.center.z))
+                vx, vy, _ = _rotate(tf, (c.velocity.x, c.velocity.y,
+                                         c.velocity.z))
                 circles[topic].append(
                     dict(uid=c.uid, x=x, y=y, vx=vx, vy=vy,
                          radius=c.radius, true_radius=c.true_radius))
@@ -203,16 +245,6 @@ class ScanViewHub(Node):
                     scan_frame=scan_frame, note=note,
                     stale_after_s=self.stale_after_s,
                     obstacles_available=self.obstacles_available)
-
-
-def _rotate(yaw, p):
-    c, s = math.cos(yaw), math.sin(yaw)
-    return (c * p[0] - s * p[1], s * p[0] + c * p[1])
-
-
-def _apply(tf, p):
-    x, y = _rotate(tf[2], p)
-    return (x + tf[0], y + tf[1])
 
 
 class ScanView:
