@@ -9,13 +9,13 @@
 # wrist clusters merge into a persistent phantom circle (true_radius ≈ 0.41)
 # at 0.29 m inside p_max. Real retune stays owned by Phase 5 with hardware
 # self-hit data.
-crop_box_self_filter:
+/**:
   ros__parameters:
-    min_x: -0.40
-    max_x: 0.40
-    min_y: -0.40
-    max_y: 0.40
-    min_z: -0.55
+    min_x: -0.50
+    max_x: 0.50
+    min_y: -0.50
+    max_y: 0.50
+    min_z: -2.0
     max_z: 0.45
     negative: true
     keep_organized: false
