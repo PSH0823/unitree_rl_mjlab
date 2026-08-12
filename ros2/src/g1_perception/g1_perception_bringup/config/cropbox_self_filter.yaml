@@ -16,8 +16,9 @@
     min_y: -0.50
     max_y: 0.50
     min_z: -2.0
-    max_z: 0.45
+    max_z: 1.05
     negative: true
     keep_organized: false
     input_frame: ''
     output_frame: ''
+
