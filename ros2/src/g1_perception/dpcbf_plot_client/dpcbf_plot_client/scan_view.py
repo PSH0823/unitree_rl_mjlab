@@ -10,6 +10,11 @@ The robot itself is drawn as a circle of `robot_radius` (0.3 m by default,
 against the body they will be summed with in the DPCBF margin rather than
 against the grid alone.
 
+Obstacles on the last topic get two rings: the solid one is `radius` (margin
+added, and inflated again by §9.6 on /obstacles_safe), the dotted one inside
+is the measured `true_radius`. The label carries both as `r=` and `t=`. They
+are different numbers and only one of them is a measurement.
+
 WHY THIS EXISTS, given dpcbf_plot_client already draws obstacles.
 
   * That view is drawn in ODOM and autoscales. Everything the robot does —
@@ -340,8 +345,22 @@ class ScanView:
                 self.ax.add_patch(c)
                 self._patches.append(c)
                 if topic == last_topic:
+                    # The solid circle is `radius` — margin-added by the
+                    # extractor and inflated again by §9.6 on /obstacles_safe.
+                    # `true_radius` is what was actually measured. Printing
+                    # only the measured one beside a circle drawn at the
+                    # inflated one makes the label read as wrong, so show both
+                    # and draw the measured radius inside: the gap between the
+                    # two rings IS the margin the controller will act on.
+                    inner = Circle((o['x'], o['y']),
+                                   max(o['true_radius'], 0.01), fill=False,
+                                   color=st['color'], lw=0.8, ls=(0, (1, 2)),
+                                   alpha=0.8)
+                    self.ax.add_patch(inner)
+                    self._patches.append(inner)
                     self._patches.append(self.ax.annotate(
-                        f"{o['uid']}  r={o['true_radius']:.2f}",
+                        f"{o['uid']}  r={o['radius']:.2f}"
+                        f"  t={o['true_radius']:.2f}",
                         (o['x'], o['y']), fontsize=7, color=st['color'],
                         xytext=(4, 4), textcoords='offset points'))
                 if o['vx'] or o['vy']:
