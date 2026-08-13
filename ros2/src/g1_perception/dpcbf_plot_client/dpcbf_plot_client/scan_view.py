@@ -2,8 +2,13 @@
 
     ros2 run dpcbf_plot_client dpcbf_scan_view
     ros2 run dpcbf_plot_client dpcbf_scan_view --ros-args \
-        -p range:=3.0 -p scan_history:=5 \
+        -p range:=3.0 -p scan_history:=5 -p robot_radius:=0.3 \
         -p obstacle_topics:="['/raw_obstacles','/obstacles_safe']"
+
+The robot itself is drawn as a circle of `robot_radius` (0.3 m by default,
+0 disables it) around the origin, so the fitted obstacle radii are read
+against the body they will be summed with in the DPCBF margin rather than
+against the grid alone.
 
 WHY THIS EXISTS, given dpcbf_plot_client already draws obstacles.
 
@@ -250,9 +255,11 @@ class ScanViewHub(Node):
 class ScanView:
     """matplotlib window. Fixed axes, fixed frame — deliberately no autoscale."""
 
-    def __init__(self, hub, gui_rate_hz=10.0, half_range=5.0):
+    def __init__(self, hub, gui_rate_hz=10.0, half_range=5.0,
+                 robot_radius=0.3):
         import matplotlib.pyplot as plt
         from matplotlib.animation import FuncAnimation
+        from matplotlib.patches import Circle
         self._plt = plt
         self.hub = hub
         self.fig, self.ax = plt.subplots(
@@ -278,6 +285,22 @@ class ScanView:
 
         self.ax.plot([0], [0], 'o', ms=9, color='#8cdc8c', zorder=5)
         self.ax.plot([0, 0.4], [0, 0], '-', lw=2, color='#8cdc8c', zorder=5)
+        # The robot's own footprint, to the same scale as the fitted circles:
+        # the DPCBF margin is a sum of radii, so "is that obstacle radius
+        # plausible?" is only answerable next to the body it is compared with.
+        # Centred on the origin, which is the robot only while target_frame is
+        # a robot frame (base_link/base_footprint) — same caveat as the marker
+        # above; in odom the origin is the map origin and this circle is not
+        # the robot.
+        self.robot_radius = float(robot_radius)
+        if self.robot_radius > 0.0:
+            # face alpha in the colour, not the patch alpha: the latter would
+            # fade the outline too, and the outline is the thing being compared
+            self.ax.add_patch(Circle(
+                (0.0, 0.0), self.robot_radius, fill=True, zorder=4,
+                facecolor=(0.55, 0.86, 0.55, 0.15), edgecolor='#5ac85a',
+                lw=1.5, ls='--',
+                label=f'robot r={self.robot_radius:.2f} m'))
         for topic in hub.obstacle_topics:
             st = STYLES.get(topic, _FALLBACK_STYLE)
             self.ax.plot([], [], color=st['color'], lw=st['lw'], ls=st['ls'],
@@ -372,8 +395,11 @@ def main(args=None):
     try:
         gui_rate_hz = float(hub.declare_parameter('gui_rate_hz', 10.0).value)
         half_range = float(hub.declare_parameter('range', 5.0).value)
+        robot_radius = float(
+            hub.declare_parameter('robot_radius', 0.3).value)
         return ScanView(hub, gui_rate_hz=gui_rate_hz,
-                        half_range=half_range).run()
+                        half_range=half_range,
+                        robot_radius=robot_radius).run()
     except KeyboardInterrupt:
         return 0
     finally:
