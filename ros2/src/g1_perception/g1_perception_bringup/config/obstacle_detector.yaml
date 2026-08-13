@@ -57,5 +57,5 @@ obstacle_tracker:
     # the S1/S2 containment afterwards. Tripwires meanwhile:
     # calibrate_k_sigma.py refuses above sigma p50 0.25 m, and the safety
     # filter counts sigma_implausible separately from sigma_clamped.
-    measurement_variance: 1.0
+    measurement_variance: 0.04
     frame_id: odom

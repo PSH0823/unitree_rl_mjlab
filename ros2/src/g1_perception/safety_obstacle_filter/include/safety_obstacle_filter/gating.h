@@ -127,8 +127,8 @@ inline obstacle_detector::msg::Obstacles Apply(
       }
       sigma_term = p.k_sigma * std::min(sigma, p.sigma_max);
     }
-    safe.radius = r + p.fixed_inflation + sigma_term +
-                  std::hypot(vx, vy) * p.latency_horizon;
+    safe.radius = 0.75*(r + p.fixed_inflation + sigma_term +
+                  std::hypot(vx, vy) * p.latency_horizon);
     out.circles.push_back(safe);
   }
   return out;
