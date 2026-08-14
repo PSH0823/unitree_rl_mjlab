@@ -44,14 +44,14 @@ die()   { fail "$*"; printf '\n\033[31maborted\033[0m\n'; exit 1; }
 # --------------------------------------------------------------------------
 step "1/6  preflight"
 
-# System python 3.10 must win over conda's: every ament_python node in this
+# The SYSTEM python must win over conda's: every ament_python node in this
 # workspace runs under `/usr/bin/python3` and rclpy is only built for it.
 export PATH=/usr/bin:$PATH
 hash -r
 PY=/usr/bin/python3
 [ -x "$PY" ] || die "no $PY"
 PYVER="$($PY -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-[ "$PYVER" = "3.10" ] && ok "system python $PYVER" || warn "system python is $PYVER, ROS Humble expects 3.10"
+ok "system python $PYVER"
 
 # Stray mini-sims are the nastiest failure in this workspace: a leftover
 # wall_state_source/scenario_state_source keeps publishing /clock at ITS sim
@@ -68,8 +68,16 @@ if [ -n "$STRAY" ]; then
   ok "cleared"
 fi
 
-[ -f /opt/ros/humble/setup.bash ] || die "ROS 2 Humble not found at /opt/ros/humble"
-set +u; source /opt/ros/humble/setup.bash; set -u
+# Distro: whatever $ROS_DISTRO says, else the one actually installed. Humble
+# is tried first so an existing setup keeps behaving exactly as before.
+if [ -z "${ROS_DISTRO:-}" ] || [ ! -f "/opt/ros/${ROS_DISTRO:-}/setup.bash" ]; then
+  for _d in humble jazzy kilted rolling; do
+    [ -f "/opt/ros/$_d/setup.bash" ] && ROS_DISTRO="$_d" && break
+  done
+fi
+[ -n "${ROS_DISTRO:-}" ] && [ -f "/opt/ros/$ROS_DISTRO/setup.bash" ] \
+  || die "no ROS 2 under /opt/ros (set ROS_DISTRO, or install ros-<distro>-ros-base)"
+set +u; source "/opt/ros/$ROS_DISTRO/setup.bash"; set -u
 ok "ROS $ROS_DISTRO sourced"
 
 command -v colcon >/dev/null || die "colcon not on PATH (apt install python3-colcon-common-extensions)"
@@ -168,7 +176,7 @@ else
   # sim_mjlidar_bridge's unit tests import the installed package, which colcon
   # does not put on PYTHONPATH for an ament_python package in a MERGED prefix —
   # they collect as "0 tests" instead of failing, so run them explicitly.
-  if PYTHONPATH="$WS/install/lib/python3.10/site-packages:${PYTHONPATH:-}" \
+  if PYTHONPATH="$WS/install/lib/python$PYVER/site-packages:${PYTHONPATH:-}" \
        $PY -m pytest -q "$WS/src/g1_perception/sim_mjlidar_bridge/test" >/tmp/mjlidar_pytest.log 2>&1; then
     ok "$(printf '%-24s %s' 'sim_mjlidar_bridge/test' "$(tail -1 /tmp/mjlidar_pytest.log)")"
   else

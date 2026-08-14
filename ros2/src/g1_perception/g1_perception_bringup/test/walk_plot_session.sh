@@ -9,7 +9,7 @@
 #   walk_plot_session.sh [scenario] [mode]      # default: W2 estimated
 #
 #   terminal 2:
-#     source /opt/ros/humble/setup.bash && source <ws>/install/setup.bash
+#     source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && source <ws>/install/setup.bash
 #     export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
 #     export CYCLONEDDS_URI=file://<ws>/install/share/g1_perception_bringup/config/cyclonedds/localhost.xml
 #     ros2 launch dpcbf_plot_client dpcbf_plot_client.launch.py
@@ -35,7 +35,7 @@ LOGS=${WALK_PLOT_LOGS:-/tmp/walk_plot_logs}
 mkdir -p "$LOGS"
 
 export PATH=/usr/bin:$PATH; hash -r
-source /opt/ros/humble/setup.bash
+source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
 source "$WS/install/setup.bash"
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
 export CYCLONEDDS_URI="file://$WS/src/g1_perception/g1_perception_bringup/config/cyclonedds/localhost.xml"
@@ -109,7 +109,7 @@ Timeline (sim s): 15.5 FixStand | 21.5 policy | 34-40 band down | 40+ walking
 
 Attach the plotting client from ANOTHER terminal:
 
-  source /opt/ros/humble/setup.bash
+  source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
   source $WS/install/setup.bash
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
   export CYCLONEDDS_URI=file://$WS/src/g1_perception/g1_perception_bringup/config/cyclonedds/localhost.xml

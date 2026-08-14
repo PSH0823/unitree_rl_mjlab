@@ -19,19 +19,70 @@ estimate instead of a per-frame guess.
 
 ---
 
+## Which machine are you setting up?
+
+There are three, and they do not share a procedure.
+
+### This file — a development / simulation machine
+
+Ubuntu 22.04 with ROS 2 Humble, or a newer Ubuntu/ROS 2 pair. Builds the whole
+workspace plus the MuJoCo simulator, so you can watch the detector work without
+a robot. Everything below is for this machine.
+
+### The robot's onboard computer — [`../doc/ros2_foxy_setup.md`](../doc/ros2_foxy_setup.md)
+
+Ubuntu 20.04 with **ROS 2 Foxy**, which is end-of-life. `ROS_DISTRO=foxy` in
+the commands below will not work: Foxy needs a different apt server
+(`snapshots.ros.org`), a different signing key, and a different build command —
+five packages skipped and no `--merge-install`. It also runs the real Mid-360
+driver and DLIO odometry, which this machine never does. That document is the
+complete build for it, ending in a 15-package workspace.
+
+### A laptop watching the robot over the network — [`../doc/ros2_teleop.md`](../doc/ros2_teleop.md)
+
+The onboard computer publishes and the laptop subscribes. Getting the two to
+see each other is its own job: both machines need the same `ROS_DOMAIN_ID` and
+`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`, and `ROS_LOCALHOST_ONLY=0` — the usual
+cause of "the topic list looks right but nothing arrives". That document has
+the environment file to write on each machine, the three link checks to run in
+order, what to do when the network blocks multicast, and the failure table.
+
+---
+
 ## 1. Prerequisites
 
-Ubuntu 22.04 with ROS 2 Humble. If `ls /opt/ros` does not show `humble`:
+Ubuntu with ROS 2. **Pick your distro once** — every command below uses this
+variable, so nothing else has to change:
+
+```bash
+export ROS_DISTRO=humble        # humble | jazzy | kilted | rolling — NOT foxy
+```
+
+Put that line in your `~/.bashrc` so new terminals inherit it.
+
+Check what you already have with `ls /opt/ros`. If your distro is not there,
+install it — the Ubuntu codename is detected automatically, so this block is
+the same on every release:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y curl gnupg software-properties-common
 sudo add-apt-repository -y universe
 curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
   | sudo gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
   | sudo tee /etc/apt/sources.list.d/ros2.list
-sudo apt-get update && sudo apt-get install -y ros-humble-ros-base
+sudo apt-get update && sudo apt-get install -y ros-$ROS_DISTRO-ros-base
 ```
+
+> Each ROS 2 release targets one Ubuntu release — Humble on 22.04, Jazzy on
+> 24.04. Install the distro that matches the Ubuntu you are on; there are no
+> Jazzy packages for 22.04 and no Humble packages for 24.04.
+
+> **Humble on 22.04 is the combination this workspace is developed against.**
+> The commands are distro-generic and every package below exists for Jazzy, but
+> if you are the first to build on a newer distro, expect to fix a compiler
+> warning or two. On Ubuntu 24.04 note that `libpcl-dev` drags in a full JRE —
+> that is normal, if surprising.
 
 ### Conda environment
 
@@ -53,9 +104,9 @@ cd ~/unitree_rl_mjlab
 pip install -e .
 ```
 
-> **The ROS 2 side does not use conda.** ROS 2 Humble runs on the system
-> Python 3.10, and the perception nodes are only built for it. Run
-> `conda deactivate` before you build or launch anything below, or put
+> **The ROS 2 side does not use conda.** ROS 2 runs on the system Python that
+> ships with your Ubuntu release, and the perception nodes are only built for
+> it. Run `conda deactivate` before you build or launch anything below, or put
 > `export PATH=/usr/bin:$PATH` at the top of the shell. Conda is only for
 > training and playing policies.
 
@@ -71,24 +122,24 @@ sudo apt-get install -y \
     libarmadillo-dev libboost-all-dev libpcl-dev libeigen3-dev \
     libyaml-cpp-dev libspdlog-dev libfmt-dev libssl-dev libcunit1-dev \
     libomp-dev libpcap-dev libapr1-dev \
-    ros-humble-ament-cmake ros-humble-ament-cmake-auto \
-    ros-humble-ament-cmake-gtest ros-humble-ament-lint-auto \
-    ros-humble-ament-lint-common \
-    ros-humble-diagnostic-msgs ros-humble-diagnostic-updater \
-    ros-humble-geometry-msgs ros-humble-laser-geometry \
-    ros-humble-launch ros-humble-launch-ros ros-humble-launch-testing \
-    ros-humble-launch-testing-ament-cmake ros-humble-launch-testing-ros \
-    ros-humble-message-filters ros-humble-nav-msgs \
-    ros-humble-pcl-conversions ros-humble-pcl-msgs \
-    ros-humble-rclcpp ros-humble-rclcpp-components ros-humble-rclpy \
-    ros-humble-rmw ros-humble-rmw-dds-common ros-humble-rmw-implementation \
-    ros-humble-robot-state-publisher ros-humble-rviz2 \
-    ros-humble-rosbag2 ros-humble-rosbag2-storage-default-plugins \
-    ros-humble-rosidl-default-generators ros-humble-rosidl-default-runtime \
-    ros-humble-sensor-msgs ros-humble-std-msgs ros-humble-std-srvs \
-    ros-humble-tf2 ros-humble-tf2-eigen ros-humble-tf2-geometry-msgs \
-    ros-humble-tf2-ros ros-humble-tf2-sensor-msgs \
-    ros-humble-visualization-msgs ros-humble-xacro
+    ros-$ROS_DISTRO-ament-cmake ros-$ROS_DISTRO-ament-cmake-auto \
+    ros-$ROS_DISTRO-ament-cmake-gtest ros-$ROS_DISTRO-ament-lint-auto \
+    ros-$ROS_DISTRO-ament-lint-common \
+    ros-$ROS_DISTRO-diagnostic-msgs ros-$ROS_DISTRO-diagnostic-updater \
+    ros-$ROS_DISTRO-geometry-msgs ros-$ROS_DISTRO-laser-geometry \
+    ros-$ROS_DISTRO-launch ros-$ROS_DISTRO-launch-ros ros-$ROS_DISTRO-launch-testing \
+    ros-$ROS_DISTRO-launch-testing-ament-cmake ros-$ROS_DISTRO-launch-testing-ros \
+    ros-$ROS_DISTRO-message-filters ros-$ROS_DISTRO-nav-msgs \
+    ros-$ROS_DISTRO-pcl-conversions ros-$ROS_DISTRO-pcl-msgs \
+    ros-$ROS_DISTRO-rclcpp ros-$ROS_DISTRO-rclcpp-components ros-$ROS_DISTRO-rclpy \
+    ros-$ROS_DISTRO-rmw ros-$ROS_DISTRO-rmw-dds-common ros-$ROS_DISTRO-rmw-implementation \
+    ros-$ROS_DISTRO-robot-state-publisher ros-$ROS_DISTRO-rviz2 \
+    ros-$ROS_DISTRO-rosbag2 ros-$ROS_DISTRO-rosbag2-storage-default-plugins \
+    ros-$ROS_DISTRO-rosidl-default-generators ros-$ROS_DISTRO-rosidl-default-runtime \
+    ros-$ROS_DISTRO-sensor-msgs ros-$ROS_DISTRO-std-msgs ros-$ROS_DISTRO-std-srvs \
+    ros-$ROS_DISTRO-tf2 ros-$ROS_DISTRO-tf2-eigen ros-$ROS_DISTRO-tf2-geometry-msgs \
+    ros-$ROS_DISTRO-tf2-ros ros-$ROS_DISTRO-tf2-sensor-msgs \
+    ros-$ROS_DISTRO-visualization-msgs ros-$ROS_DISTRO-xacro
 ```
 
 The simulated LiDAR needs MuJoCo 3.5 or newer **on the system Python**:
@@ -111,6 +162,9 @@ cd ~/unitree_rl_mjlab/ros2
 This clones the pinned external repositories into `src/external/` and applies
 the recorded patches. It is safe to re-run.
 
+Nothing here depends on your ROS distro — it is `git` and `vcstool` only, and
+the same command is used on the Foxy machine too.
+
 ### 2.2 Build everything
 
 ```bash
@@ -130,7 +184,7 @@ tests it has data for. Useful variants:
 
 ```bash
 cd ~/unitree_rl_mjlab/ros2
-source /opt/ros/humble/setup.bash
+source /opt/ros/$ROS_DISTRO/setup.bash
 colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
@@ -159,7 +213,7 @@ Every new terminal needs these three lines first:
 
 ```bash
 cd ~/unitree_rl_mjlab/ros2
-source /opt/ros/humble/setup.bash
+source /opt/ros/$ROS_DISTRO/setup.bash
 source install/setup.bash
 ```
 
