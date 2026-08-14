@@ -4,6 +4,33 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 vcs import --shallow src < deps.repos
+
+# --- distro-coupled checkout: rmw_cyclonedds --------------------------------
+# rmw_cyclonedds is the one external whose sources track the ROS distro's
+# internal C++ API rather than a public one. Its humble branch locks
+# `common->node_update_mutex` directly, and Jazzy made
+# rmw_dds_common::Context::node_update_mutex PRIVATE — on Jazzy the humble
+# branch fails with eight "is private within this context" errors in
+# rmw_node.cpp and takes the rest of the workspace down with it.
+#
+# The deb (ros-jazzy-rmw-cyclonedds-cpp) is NOT the fix: it links the distro's
+# own CycloneDDS 0.10.5 while unitree_sdk2 links the 0.10.2 built here, which
+# puts two CycloneDDS copies in one process — exactly the symbol conflict gate
+# T10 exists to prove does not happen. So the jazzy branch is built from
+# source against the same pinned 0.10.2, and it compiles clean.
+#
+# SHAs resolved 2026-08-14 (git ls-remote); same pinning policy as deps.repos.
+case "${ROS_DISTRO:-humble}" in
+  jazzy)  RMW_CYCLONEDDS_SHA=c14957709256c344d1dfc07a5c5cc60ea480d9a2 ;;  # branch jazzy
+  kilted) RMW_CYCLONEDDS_SHA=b67d268da024e7b49b61882aa67bee07d5a3c523 ;;  # branch kilted
+  *)      RMW_CYCLONEDDS_SHA=fa8831b9f331d669c3ea408fd00606a223c6bbd9 ;;  # branch humble (deps.repos)
+esac
+if [ "$(git -C src/external/rmw_cyclonedds rev-parse HEAD)" != "$RMW_CYCLONEDDS_SHA" ]; then
+  echo "rmw_cyclonedds -> ${ROS_DISTRO:-humble} branch ($RMW_CYCLONEDDS_SHA)"
+  git -C src/external/rmw_cyclonedds fetch --depth 1 origin "$RMW_CYCLONEDDS_SHA"
+  git -C src/external/rmw_cyclonedds checkout --detach "$RMW_CYCLONEDDS_SHA"
+fi
+
 touch src/external/MuJoCo-LiDAR/COLCON_IGNORE \
       src/external/unitree_dds_wrapper/COLCON_IGNORE \
       src/external/cyclonedds-cxx/COLCON_IGNORE
@@ -133,4 +160,26 @@ git -C src/external/livox_ros_driver2 apply --check ../../../patches/0014-livox-
 git -C src/external/direct_lidar_inertial_odometry apply --check ../../../patches/0015-dlio-f1-foxy-and-pcl-1-10-portability.patch 2>/dev/null \
   && git -C src/external/direct_lidar_inertial_odometry apply ../../../patches/0015-dlio-f1-foxy-and-pcl-1-10-portability.patch \
   || echo "DLIO F-1 patch already applied"
+# J-1 (Ubuntu 24.04 / GCC 13). Livox-SDK2 v1.3.1 relies on <cstdint> arriving
+# through some other header; GCC 13 stopped providing it transitively, so on
+# noble the SDK dies with "'uint8_t' in namespace 'std' does not name a type"
+# and takes livox_ros_driver2 and the whole hardware branch with it. Patch 0016
+# adds the include to the six translation units that need it. Upstream fixed
+# this too, but only inside the master commit that also adds Avia2 support and
+# rewrites the 3rdparty tree — far more than this pin should carry. Harmless on
+# 22.04/20.04: the include is simply already satisfied there.
+git -C src/external/Livox-SDK2 apply --check ../../../patches/0016-livox-sdk2-cstdint-for-gcc-13.patch 2>/dev/null \
+  && git -C src/external/Livox-SDK2 apply ../../../patches/0016-livox-sdk2-cstdint-for-gcc-13.patch \
+  || echo "Livox-SDK2 J-1 patch already applied"
+# J-2 (merged-prefix install race; not distro-specific, but it is what a clean
+# rebuild hits first). unitree_sdk2 installs its BUNDLED CycloneDDS into the
+# same prefix the source-built 0.10.2 goes to, and the two use opposite symlink
+# layouts for libddsc.so/.so.0 — interleaved they leave a symlink LOOP that
+# fails every later link with "Too many levels of symbolic links". Patch 0017
+# stops unitree_sdk2 installing libddsc.* (both copies are 0.10.2 and the
+# source build defines every symbol the SDK and libddscxx need); libddscxx.* is
+# still installed from there, cyclonedds-cxx being COLCON_IGNOREd.
+git -C src/external/unitree_sdk2 apply --check ../../../patches/0017-unitree-sdk2-do-not-install-bundled-libddsc.patch 2>/dev/null \
+  && git -C src/external/unitree_sdk2 apply ../../../patches/0017-unitree-sdk2-do-not-install-bundled-libddsc.patch \
+  || echo "unitree_sdk2 J-2 patch already applied"
 echo "External sources ready."

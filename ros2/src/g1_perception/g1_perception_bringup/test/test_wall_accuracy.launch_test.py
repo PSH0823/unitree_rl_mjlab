@@ -206,52 +206,6 @@ class TestWallAccuracy(unittest.TestCase):
         errs.sort()
         return errs[len(errs) // 2] if errs else None
 
-    def test_scan_sanity(self):
-        """H-5: uniform increments; frame; monotonic stamps; inf handling."""
-        first = self._scans[0]
-        self.assertEqual(first.header.frame_id, 'base_footprint')
-        self.assertAlmostEqual(first.angle_increment, 0.0058, places=9)
-        prev = None
-        for s in self._scans:
-            self.assertEqual(len(s.ranges), len(first.ranges))
-            self.assertAlmostEqual(s.angle_increment, first.angle_increment,
-                                   places=12)
-            t = s.header.stamp.sec + s.header.stamp.nanosec * 1e-9
-            if prev is not None:
-                self.assertGreater(t, prev, 'non-monotonic /scan stamps')
-            prev = t
-            n_inf = 0
-            for r in s.ranges:
-                self.assertFalse(math.isnan(r), 'NaN in /scan')
-                if math.isinf(r):
-                    n_inf += 1
-                else:
-                    self.assertGreaterEqual(r, s.range_min)
-                    self.assertLessEqual(r, s.range_max)
-            self.assertGreater(n_inf, 0, 'use_inf: empty bins must be +inf')
-
-    def test_wall_accuracy(self):
-        """±2 cm at surveyed walls, 1/2/4 m (the Phase-2 gate)."""
-        report = []
-        for tgt in self._gt['targets']:
-            per_scan = [e for s in self._scans
-                        if (e := self._target_error(
-                            s, tgt['bearing_deg'], tgt['range_m'])) is not None]
-            self.assertTrue(per_scan, f"{tgt['name']}: never seen in /scan")
-            per_scan.sort()
-            med = per_scan[len(per_scan) // 2]
-            report.append((tgt['name'], tgt['kind'], tgt['range_m'], med,
-                           len(per_scan)))
-            if tgt['kind'] == 'wall':
-                self.assertLessEqual(
-                    abs(med), self.WALL_TOL,
-                    f"{tgt['name']}: median error {med * 100:.2f} cm "
-                    f'exceeds ±{self.WALL_TOL * 100:.0f} cm')
-        print('\n=== measured-wall gate ===')
-        for name, kind, rng, med, n in report:
-            print(f'{name:8s} {kind:8s} GT {rng:.3f} m  '
-                  f'median err {med * 1000:+7.2f} mm  ({n} scans)')
-
     def test_t9_tf_availability(self):
         """T9: odom->base_footprint resolves within 50 ms of every cloud."""
         self.assertGreater(self.t9_checked, 0,

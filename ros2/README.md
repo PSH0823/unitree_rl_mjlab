@@ -25,9 +25,9 @@ There are three, and they do not share a procedure.
 
 ### This file — a development / simulation machine
 
-Ubuntu 22.04 with ROS 2 Humble, or a newer Ubuntu/ROS 2 pair. Builds the whole
-workspace plus the MuJoCo simulator, so you can watch the detector work without
-a robot. Everything below is for this machine.
+Ubuntu 22.04 with ROS 2 Humble, or Ubuntu 24.04 with ROS 2 Jazzy. Builds the
+whole workspace plus the MuJoCo simulator, so you can watch the detector work
+without a robot. Everything below is for this machine.
 
 ### The robot's onboard computer — [`../doc/ros2_foxy_setup.md`](../doc/ros2_foxy_setup.md)
 
@@ -78,11 +78,10 @@ sudo apt-get update && sudo apt-get install -y ros-$ROS_DISTRO-ros-base
 > 24.04. Install the distro that matches the Ubuntu you are on; there are no
 > Jazzy packages for 22.04 and no Humble packages for 24.04.
 
-> **Humble on 22.04 is the combination this workspace is developed against.**
-> The commands are distro-generic and every package below exists for Jazzy, but
-> if you are the first to build on a newer distro, expect to fix a compiler
-> warning or two. On Ubuntu 24.04 note that `libpcl-dev` drags in a full JRE —
-> that is normal, if surprising.
+> **Humble on 22.04 and Jazzy on 24.04 both build and run.** Everything below
+> is the same on either one except two commands, each marked
+> **Ubuntu 24.04 only** where it appears. On 24.04 `libpcl-dev` drags in a full
+> JRE — that is normal, if surprising.
 
 ### Conda environment
 
@@ -106,9 +105,19 @@ pip install -e .
 
 > **The ROS 2 side does not use conda.** ROS 2 runs on the system Python that
 > ships with your Ubuntu release, and the perception nodes are only built for
-> it. Run `conda deactivate` before you build or launch anything below, or put
-> `export PATH=/usr/bin:$PATH` at the top of the shell. Conda is only for
-> training and playing policies.
+> it. Conda is only for training and playing policies.
+>
+> Before building or launching anything below, leave the environment properly —
+> `conda deactivate` on its own is not enough, because it leaves `VIRTUAL_ENV`
+> set and CMake picks the conda Python up from there:
+>
+> ```bash
+> conda deactivate
+> unset VIRTUAL_ENV CONDA_PREFIX PYTHONHOME
+> ```
+>
+> `tools/bootstrap.sh` does this for you. You only need it when you run `colcon`
+> by hand (§2.3).
 
 ### System packages
 
@@ -142,11 +151,20 @@ sudo apt-get install -y \
     ros-$ROS_DISTRO-visualization-msgs ros-$ROS_DISTRO-xacro
 ```
 
-The simulated LiDAR needs MuJoCo 3.5 or newer **on the system Python**:
+The simulated LiDAR needs MuJoCo 3.5 or newer **on the system Python** — not in
+the conda env, which the sim LiDAR bridge never sees:
 
 ```bash
+# Ubuntu 22.04
 /usr/bin/python3 -m pip install -U "mujoco>=3.5"
+
+# Ubuntu 24.04 only — its system Python refuses a plain install
+/usr/bin/python3 -m pip install -U --user --break-system-packages "mujoco>=3.5"
 ```
+
+`tools/bootstrap.sh` picks the right one for you. If MuJoCo is missing the build
+still succeeds — the `wall_accuracy` gate is then listed as *not run* instead of
+failing.
 
 ---
 
@@ -162,8 +180,9 @@ cd ~/unitree_rl_mjlab/ros2
 This clones the pinned external repositories into `src/external/` and applies
 the recorded patches. It is safe to re-run.
 
-Nothing here depends on your ROS distro — it is `git` and `vcstool` only, and
-the same command is used on the Foxy machine too.
+It is `git` and `vcstool` only — no compiler, and the same command is used on
+the Foxy machine. It does read `$ROS_DISTRO`, to pick the matching branch of
+`rmw_cyclonedds`, so make sure you exported it in §1 first.
 
 ### 2.2 Build everything
 
@@ -184,16 +203,22 @@ tests it has data for. Useful variants:
 
 ```bash
 cd ~/unitree_rl_mjlab/ros2
+unset VIRTUAL_ENV CONDA_PREFIX PYTHONHOME
 source /opt/ros/$ROS_DISTRO/setup.bash
-colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --merge-install \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE=/usr/bin/python3
 ```
+
+Both the `unset` and `-DPython3_EXECUTABLE` matter if conda has ever been
+activated in that shell — see §1.
 
 The simulator is plain CMake, not colcon:
 
 ```bash
 cd ~/unitree_rl_mjlab/simulate && mkdir -p build_ros2 && cd build_ros2
 cmake .. -DCMAKE_BUILD_TYPE=Release -DUNITREE_MUJOCO_WITH_ROS2=ON \
-      -DCMAKE_PREFIX_PATH=$PWD/../../ros2/install
+      -DCMAKE_PREFIX_PATH=$PWD/../../ros2/install \
+      -DPython3_EXECUTABLE=/usr/bin/python3
 make -j$(nproc)
 ```
 
@@ -204,6 +229,15 @@ cd ~/unitree_rl_mjlab/deploy/robots/g1 && mkdir -p build && cd build
 cmake .. -DCMAKE_PREFIX_PATH=$PWD/../../../../ros2/install
 make -j$(nproc)
 ```
+
+### 2.4 If the build stops
+
+| It says | Do this |
+|---|---|
+| `No module named 'catkin_pkg'` | conda is still in the environment — see §1, then re-run `bootstrap.sh` (it clears the build dirs that cached the wrong Python) |
+| `externally-managed-environment` | you are on 24.04 and used the 22.04 MuJoCo command — see §1 |
+| `node_update_mutex is private` | `setup_external.sh` ran without `ROS_DISTRO` set — export it (§1) and re-run it |
+| `Too many levels of symbolic links` on `libddsc.so` | `rm -f install/lib/libddsc.so*` and `rm -rf build/unitree_sdk2 build/cyclonedds`, then rebuild |
 
 ---
 

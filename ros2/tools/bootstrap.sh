@@ -53,6 +53,37 @@ PY=/usr/bin/python3
 PYVER="$($PY -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 ok "system python $PYVER"
 
+# ...but prepending /usr/bin is NOT enough for CMake. find_package(Python3)
+# defaults to Python3_FIND_VIRTUALENV=FIRST, which consults $VIRTUAL_ENV /
+# $CONDA_PREFIX *before* $PATH. A shell that once activated conda leaves
+# VIRTUAL_ENV exported even after `conda deactivate` (CONDA_SHLVL=0), so
+# ament_cmake picks up a python with no catkin_pkg and EVERY ament package
+# dies at configure time with:
+#     ModuleNotFoundError: No module named 'catkin_pkg'
+# Unset the hints here, and pass Python3_EXECUTABLE explicitly below so the
+# answer does not depend on the caller's environment at all.
+for _v in VIRTUAL_ENV CONDA_PREFIX CONDA_DEFAULT_ENV PYTHONHOME; do
+  if [ -n "${!_v:-}" ]; then
+    warn "unsetting $_v=${!_v} (it outranks PATH in find_package(Python3))"
+    unset "$_v"
+  fi
+done
+# Same story for PYTHONPATH: a conda/uv site-packages leaking in shadows the
+# distro numpy that rclpy and the C++ PCL bindings were compiled against.
+case "${PYTHONPATH:-}" in
+  *conda*|*"/.local/share/uv/"*|*pyenv*)
+    warn "dropping non-system entries from PYTHONPATH"
+    PYTHONPATH="$(printf '%s' "$PYTHONPATH" | tr ':' '\n' \
+      | grep -vE 'conda|/\.local/share/uv/|pyenv' | paste -sd: -)"
+    export PYTHONPATH
+    ;;
+esac
+# Decisive for every CMake package in the workspace and for the simulate build.
+PYCMAKE="-DPython3_EXECUTABLE=$PY -DPYTHON_EXECUTABLE=$PY"
+
+$PY -c 'import catkin_pkg' 2>/dev/null \
+  || die "$PY cannot import catkin_pkg (apt install python3-catkin-pkg-modules)"
+
 # Stray mini-sims are the nastiest failure in this workspace: a leftover
 # wall_state_source/scenario_state_source keeps publishing /clock at ITS sim
 # time, the next run's clock starts at 0, every tf2 buffer sees "jump back in
@@ -91,10 +122,21 @@ if $PY -c "import mujoco, sys; sys.exit(0 if 'normal' in mujoco.mj_multiRay.__do
   MUJOCO_OK=1
 else
   warn "mujoco too old or missing — installing >=3.5 for $PY"
-  $PY -m pip install -q -U "mujoco>=3.5" \
-    && ok "mujoco $($PY -c 'import mujoco; print(mujoco.__version__)') installed" \
-    && MUJOCO_OK=1 \
-    || { fail "mujoco>=3.5 install failed — sim lidar gates will not run"; MUJOCO_OK=0; }
+  # Ubuntu 24.04's system python is PEP 668 "externally managed": a plain
+  # `pip install` aborts with externally-managed-environment. Install into the
+  # USER site instead (~/.local/lib/pythonX.Y/site-packages, which /usr/bin/
+  # python3 imports) — --break-system-packages only lifts the PEP 668 refusal
+  # and with --user nothing dpkg owns is touched.
+  PIPFLAGS=""
+  $PY -m pip install --help 2>/dev/null | grep -q -- --break-system-packages \
+    && PIPFLAGS="--break-system-packages"
+  if $PY -m pip install -q -U --user $PIPFLAGS "mujoco>=3.5"; then
+    ok "mujoco $($PY -c 'import mujoco; print(mujoco.__version__)') installed"
+    MUJOCO_OK=1
+  else
+    fail "mujoco>=3.5 install failed — sim lidar gates will not run"
+    MUJOCO_OK=0
+  fi
 fi
 
 # --------------------------------------------------------------------------
@@ -110,13 +152,28 @@ fi
 
 # --------------------------------------------------------------------------
 step "3/6  colcon build"
+# A CMakeCache written by an earlier run that picked up conda's/uv's python
+# keeps that interpreter forever — Python3_EXECUTABLE is cached, so the fix
+# above would be silently ignored and the build fails exactly as before.
+# Drop only the build dirs that are actually poisoned.
+STALE=0
+for _c in build/*/CMakeCache.txt; do
+  [ -f "$_c" ] || continue
+  _p="$(sed -n 's/^_\?Python3_EXECUTABLE:[A-Z]*=//p' "$_c" | head -1)"
+  if [ -n "$_p" ] && [ "$_p" != "$PY" ]; then
+    rm -rf "$(dirname "$_c")"
+    STALE=$((STALE + 1))
+  fi
+done
+[ "$STALE" -gt 0 ] && warn "purged $STALE build dir(s) cached against a non-system python"
+
 # rmw_cyclonedds_cpp is BUILT HERE, so it cannot be selected as the RMW while
 # building: CMake resolves RMW_IMPLEMENTATION at configure time and fails with
 # "Could not find ROS middleware implementation 'rmw_cyclonedds_cpp'" on the
 # very first package. It is exported for the run/test stages further down.
 env -u RMW_IMPLEMENTATION colcon build --merge-install \
     --parallel-workers "$JOBS" \
-    --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release $PYCMAKE \
   || die "colcon build failed"
 ok "$(ls install/share | wc -l) packages installed (merged prefix)"
 
@@ -133,7 +190,7 @@ else
   mkdir -p "$REPO/simulate/build_ros2"
   ( cd "$REPO/simulate/build_ros2" \
     && cmake .. -DCMAKE_BUILD_TYPE=Release -DUNITREE_MUJOCO_WITH_ROS2=ON \
-                -DCMAKE_PREFIX_PATH="$WS/install" >/dev/null \
+                -DCMAKE_PREFIX_PATH="$WS/install" -DPython3_EXECUTABLE="$PY" >/dev/null \
     && make -j"$JOBS" >/dev/null ) \
     && ok "unitree_mujoco + t1_replay + ab_eval + fsm_button_probe" \
     || fail "simulate build failed (see $REPO/simulate/build_ros2)"
@@ -144,8 +201,30 @@ step "5/6  what can be tested here"
 have() { [ -f "$WS/test_fixtures/$1/metadata.yaml" ]; }
 
 # Gates that need no recorded data at all.
-CTESTS='marker_relay|hw_config_check|hw_offline_gates|bringup_sim'
+CTESTS='marker_relay|bringup_sim'
 MISSING=()
+
+# hw_config_check / hw_offline_gates need no BAG, but they do need the robot's
+# network: they assert that the host IP in config/MID360_config.json is actually
+# assigned to a local interface, which is true on the Jetson wired to the
+# Mid-360 and false on any dev machine. Running them anyway reports two
+# failures that say nothing about this build, so select them the same way the
+# bag gates are selected — by whether the machine can actually prove them.
+HOST_IP="$($PY - "$WS/src/g1_perception/g1_perception_bringup/config/MID360_config.json" <<'EOF' 2>/dev/null
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+    print(cfg['MID360']['host_net_info']['cmd_data_ip'])
+except Exception:
+    pass
+EOF
+)"
+if [ -n "$HOST_IP" ] && ip -4 -o addr show 2>/dev/null | grep -qw "$HOST_IP"; then
+  CTESTS="$CTESTS|hw_config_check|hw_offline_gates"
+else
+  MISSING+=("hw_config_check, hw_offline_gates (host is not on the Mid-360 network${HOST_IP:+ — no interface has $HOST_IP})")
+fi
+
 [ "$MUJOCO_OK" = 1 ] && CTESTS="$CTESTS|wall_accuracy" || MISSING+=("wall_accuracy (mujoco<3.5)")
 if have s1_static_reference; then CTESTS="$CTESTS|projection_replay|hw_source_contract|dlio_wiring"
   else MISSING+=("projection_replay, hw_source_contract, dlio_wiring (no s1_static_reference bag)"); fi

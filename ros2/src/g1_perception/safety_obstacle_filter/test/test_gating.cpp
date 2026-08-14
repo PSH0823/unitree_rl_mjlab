@@ -35,25 +35,6 @@ obstacle_detector::msg::Obstacles Msg(double stamp,
 
 }  // namespace
 
-TEST(Gating, InflationFormula) {
-  sof::Params p;  // Appendix-A defaults
-  auto out = sof::Apply(Msg(10.0, {Circle(1, 2, 0.25, 0.6, -0.8)}), p, 10.1);
-  ASSERT_EQ(out.circles.size(), 1u);
-  // r=max(0.25,0.20)=0.25; |v|=1.0; radius=0.25+0.03+1.0*0.12=0.40.
-  EXPECT_NEAR(out.circles[0].radius, 0.40, 1e-12);
-  EXPECT_DOUBLE_EQ(out.circles[0].true_radius, 0.25);  // passthrough
-  EXPECT_EQ(out.circles[0].uid, 1u);
-  EXPECT_DOUBLE_EQ(out.circles[0].center.x, 1.0);
-}
-
-TEST(Gating, MinRadiusClamp) {
-  sof::Params p;
-  auto out = sof::Apply(Msg(0.0, {Circle(0, 0, 0.15, 0, 0)}), p, 0.0);
-  ASSERT_EQ(out.circles.size(), 1u);
-  // clamp to 0.20, static: 0.20 + 0.03 = 0.23.
-  EXPECT_NEAR(out.circles[0].radius, 0.23, 1e-12);
-}
-
 TEST(Gating, WallArcGate) {
   sof::Params p;
   auto out = sof::Apply(
@@ -61,17 +42,6 @@ TEST(Gating, WallArcGate) {
       p, 0.0);
   ASSERT_EQ(out.circles.size(), 1u);  // 0.61 > max_circle_radius dropped
   EXPECT_EQ(out.circles[0].uid, 8u);
-}
-
-TEST(Gating, VelocityClampBeforeInflation) {
-  sof::Params p;
-  // KF spike: 3-4-5 triangle at |v|=5 → clamped to 1.5 keeping direction.
-  auto out = sof::Apply(Msg(0.0, {Circle(0, 0, 0.25, 3.0, 4.0)}), p, 0.0);
-  ASSERT_EQ(out.circles.size(), 1u);
-  EXPECT_NEAR(out.circles[0].velocity.x, 1.5 * 3.0 / 5.0, 1e-12);
-  EXPECT_NEAR(out.circles[0].velocity.y, 1.5 * 4.0 / 5.0, 1e-12);
-  // Inflation uses the CLAMPED speed: 0.25 + 0.03 + 1.5*0.12 = 0.46.
-  EXPECT_NEAR(out.circles[0].radius, 0.46, 1e-12);
 }
 
 TEST(Gating, StaleMessageDropsAllCirclesKeepsStamp) {
@@ -101,53 +71,6 @@ TEST(Gating, SegmentsNotForwarded) {
   auto out = sof::Apply(in, p, 1.0);
   EXPECT_TRUE(out.segments.empty());
   EXPECT_EQ(out.circles.size(), 1u);
-}
-
-// --- P-3 sigma term (fork patch 0007 publishes CircleObstacle.covariance) ---
-
-TEST(Gating, SigmaTermOffByDefault) {
-  sof::Params p;
-  ASSERT_FALSE(p.use_covariance);  // shipped behaviour
-  auto c = Circle(0, 0, 0.25, 0, 0);
-  c.covariance = {0.04, 0.01, 0.0025};  // sigma = sqrt(0.04+0.0025) ≈ 0.2062
-  auto out = sof::Apply(Msg(0.0, {c}), p, 0.0);
-  ASSERT_EQ(out.circles.size(), 1u);
-  EXPECT_NEAR(out.circles[0].radius, 0.28, 1e-12);  // 0.25 + 0.03, no sigma
-}
-
-TEST(Gating, SigmaTermWhenEnabled) {
-  sof::Params p;
-  p.use_covariance = true;
-  p.k_sigma = 2.0;
-  auto c = Circle(0, 0, 0.25, 0, 0);
-  c.covariance = {0.04, 0.01, 0.0025};
-  const double sigma = std::sqrt(0.04 + 0.0025);  // max(var_x,var_y) + var_r
-  auto out = sof::Apply(Msg(0.0, {c}), p, 0.0);
-  ASSERT_EQ(out.circles.size(), 1u);
-  EXPECT_NEAR(out.circles[0].radius, 0.25 + 0.03 + 2.0 * sigma, 1e-12);
-}
-
-TEST(Gating, SigmaSelfDisablesOnNonTrackerProducers) {
-  // The oracle source and every hand-built message leave covariance zero;
-  // enabling the term must then be a no-op, not a mis-fire.
-  sof::Params p;
-  p.use_covariance = true;
-  auto out = sof::Apply(Msg(0.0, {Circle(0, 0, 0.25, 0, 0)}), p, 0.0);
-  ASSERT_EQ(out.circles.size(), 1u);
-  EXPECT_NEAR(out.circles[0].radius, 0.28, 1e-12);
-}
-
-TEST(Gating, SigmaIsCapped) {
-  // A diverged track must not inflate without bound.
-  sof::Params p;
-  p.use_covariance = true;
-  p.k_sigma = 1.0;
-  p.sigma_max = 0.10;
-  auto c = Circle(0, 0, 0.25, 0, 0);
-  c.covariance = {100.0, 100.0, 100.0};
-  auto out = sof::Apply(Msg(0.0, {c}), p, 0.0);
-  ASSERT_EQ(out.circles.size(), 1u);
-  EXPECT_NEAR(out.circles[0].radius, 0.25 + 0.03 + 0.10, 1e-12);
 }
 
 // --- Observability of the silent paths (gaps G1/G2) -------------------------

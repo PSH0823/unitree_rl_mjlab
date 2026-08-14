@@ -1,0 +1,72 @@
+diff --git a/sdk_core/comm/define.h b/sdk_core/comm/define.h
+index 0872328..738fa12 100644
+--- a/sdk_core/comm/define.h
++++ b/sdk_core/comm/define.h
+@@ -25,6 +25,7 @@
+ #ifndef LIVOX_DEFINE_H_
+ #define LIVOX_DEFINE_H_
+ 
++#include <cstdint>
+ #include <stdio.h>
+ #include <string>
+ #include <memory>
+diff --git a/sdk_core/command_handler/command_impl.cpp b/sdk_core/command_handler/command_impl.cpp
+index df4edff..191f7b1 100644
+--- a/sdk_core/command_handler/command_impl.cpp
++++ b/sdk_core/command_handler/command_impl.cpp
+@@ -22,6 +22,7 @@
+ // SOFTWARE.
+ //
+ 
++#include <cstdint>
+ #include "command_impl.h"
+ 
+ #include "livox_lidar_def.h"
+diff --git a/sdk_core/data_handler/data_handler.cpp b/sdk_core/data_handler/data_handler.cpp
+index edd9d90..5a2210f 100644
+--- a/sdk_core/data_handler/data_handler.cpp
++++ b/sdk_core/data_handler/data_handler.cpp
+@@ -22,6 +22,7 @@
+ // SOFTWARE.
+ //
+ 
++#include <cstdint>
+ #include "data_handler.h"
+ #include <base/logging.h>
+ 
+diff --git a/sdk_core/debug_point_cloud_handler/debug_point_cloud_handler.cpp b/sdk_core/debug_point_cloud_handler/debug_point_cloud_handler.cpp
+index 3e94807..d045bb6 100644
+--- a/sdk_core/debug_point_cloud_handler/debug_point_cloud_handler.cpp
++++ b/sdk_core/debug_point_cloud_handler/debug_point_cloud_handler.cpp
+@@ -22,6 +22,7 @@
+ // SOFTWARE.
+ //
+ 
++#include <cstdint>
+ #include "debug_point_cloud_handler.h"
+ 
+ #include "FastCRC/FastCRC.h"
+diff --git a/sdk_core/debug_point_cloud_handler/debug_point_cloud_handler.h b/sdk_core/debug_point_cloud_handler/debug_point_cloud_handler.h
+index 4714e1b..fb2ed24 100644
+--- a/sdk_core/debug_point_cloud_handler/debug_point_cloud_handler.h
++++ b/sdk_core/debug_point_cloud_handler/debug_point_cloud_handler.h
+@@ -25,6 +25,7 @@
+ #ifndef DEBUG_POINT_CLOUD_HANDLER_H_
+ #define DEBUG_POINT_CLOUD_HANDLER_H_
+ 
++#include <cstdint>
+ #include "base/io_thread.h"
+ #include "base/noncopyable.h"
+ #include "base/logging.h"
+diff --git a/sdk_core/logger_handler/file_manager.h b/sdk_core/logger_handler/file_manager.h
+index 242a431..d8a564a 100644
+--- a/sdk_core/logger_handler/file_manager.h
++++ b/sdk_core/logger_handler/file_manager.h
+@@ -25,6 +25,7 @@
+ #ifndef LIVOX_FILE_MANAGER_
+ #define LIVOX_FILE_MANAGER_
+ 
++#include <cstdint>
+ #include <string>
+ #include <vector>
+ #include <map>
