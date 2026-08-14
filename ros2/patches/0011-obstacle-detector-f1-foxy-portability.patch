@@ -38,18 +38,26 @@ The four incompatibilities, in the order the compiler found them:
    the existing callback — scanCallback(), pclCallback(), odomCallback() and
    obstaclesCallback() keep their signatures and their bodies verbatim.
 
-Applies on top of patches 0003 + 0004 + 0007 + 0009 + 0010 AND the
-A-mode `loop_rate` revival that currently lives only in the working tree
-(obstacle_tracker.{h,cpp}, uncommitted, no patch of its own — it reactivates
-what 0010 retired, for the rate-comparison experiment). Verified by
-reconstructing the pre-image of the five touched files, applying this patch,
-and diffing the result against the working tree: identical. On a bare
-0003..0010 stack the two obstacle_tracker.cpp hunks will need re-anchoring —
-that drift predates this patch.
 
+Applies on top of patches 0003 + 0004 + 0007 + 0009 + 0010 — i.e. exactly the
+stack `setup_external.sh` builds from a fresh `vcs import`, with nothing else
+required.
+
+Re-anchored 2026-08-14. The previous revision of this patch was cut against a
+working tree that also carried the A-mode `loop_rate` revival — an uncommitted
+change with no patch of its own — so its two `obstacle_tracker.cpp` hunks did
+not apply to a fresh clone. `setup_external.sh` reported that as "obstacle
+detector F-1 patch already applied" and continued, leaving a tree that builds
+on Humble and fails on Foxy at CMakeLists.txt:49 with
+`Unknown CMake command "rosidl_get_typesupport_target"`. The hunks are
+re-anchored here; what the patch changes is byte-for-byte what it changed
+before (verified by diffing the applied result against the tree the previous
+revision produced: the only differences are the A-mode revival's own lines).
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 06e6dfb..89cd240 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -35,6 +35,21 @@
+@@ -35,6 +35,21 @@ rosidl_generate_interfaces(${PROJECT_NAME}
    DEPENDENCIES geometry_msgs std_msgs builtin_interfaces 
  )
  
@@ -71,7 +79,7 @@ that drift predates this patch.
  set(PROJECT_INCLUDE_DIRS include)
  set(PROJECT_DEPENDS "rclcpp" "std_msgs" "nav_msgs" "std_srvs" "visualization_msgs" "geometry_msgs" "sensor_msgs" "tf2" "tf2_geometry_msgs" "tf2_ros" "laser_geometry" "rosidl_default_generators")
  
-@@ -46,22 +61,19 @@
+@@ -46,22 +61,19 @@ add_library(obstacle_extractor src/obstacle_extractor.cpp)
  target_link_libraries(obstacle_extractor ${ARMADILLO_LIBRARIES})
  ament_target_dependencies(obstacle_extractor ${PROJECT_DEPENDS})
  # allow the project to link against its own messages
@@ -97,6 +105,8 @@ that drift predates this patch.
  
  #
  # Build nodes
+diff --git a/include/obstacle_detector/utilities/math_utilities.h b/include/obstacle_detector/utilities/math_utilities.h
+index 40ff5bc..144b4b2 100644
 --- a/include/obstacle_detector/utilities/math_utilities.h
 +++ b/include/obstacle_detector/utilities/math_utilities.h
 @@ -37,10 +37,17 @@
@@ -117,7 +127,7 @@ that drift predates this patch.
  
  #include "obstacle_detector/utilities/point.h"
  
-@@ -98,12 +105,17 @@
+@@ -98,12 +105,17 @@ inline Point transformPoint(const Point point, double x, double y, double theta)
  }
  
  inline Point transformPoint(const Point& point, const geometry_msgs::msg::TransformStamped& transform) {
@@ -140,216 +150,9 @@ that drift predates this patch.
  }
  
  inline bool checkPointInLimits(const geometry_msgs::msg::Point32& p, double x_min, double x_max, double y_min, double y_max) {
---- a/src/obstacle_extractor.cpp
-+++ b/src/obstacle_extractor.cpp
-@@ -34,6 +34,7 @@
-  */
- 
- #include "obstacle_detector/obstacle_extractor.h"
-+#include "obstacle_detector/utilities/rclcpp_compat.h"
- #include "obstacle_detector/utilities/figure_fitting.h"
- #include "obstacle_detector/utilities/math_utilities.h"
- 
-@@ -65,29 +66,29 @@
- 
- void ObstacleExtractor::updateParamsUtil(){
-   bool prev_active = p_active_;
--  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("use_scan", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("use_pcl", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("use_pcl2", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("use_split_and_merge", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("circles_from_visibles", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("discard_converted_segments", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("transform_coordinates", rclcpp::PARAMETER_BOOL);
--
--  nh_->declare_parameter("min_group_points", rclcpp::PARAMETER_INTEGER);
--
--  nh_->declare_parameter("max_group_distance", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("distance_proportion", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("max_split_distance", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("max_merge_separation", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("max_merge_spread", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("max_circle_radius", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("radius_enlargement", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("min_x_limit", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("max_x_limit", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("min_y_limit", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("max_y_limit", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
-+  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "use_scan", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "use_pcl", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "use_pcl2", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "use_split_and_merge", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "circles_from_visibles", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "discard_converted_segments", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "transform_coordinates", rclcpp::PARAMETER_BOOL);
-+
-+  obstacle_detector::declare_parameter_typed(nh_, "min_group_points", rclcpp::PARAMETER_INTEGER);
-+
-+  obstacle_detector::declare_parameter_typed(nh_, "max_group_distance", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "distance_proportion", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "max_split_distance", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "max_merge_separation", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "max_merge_spread", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "max_circle_radius", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "radius_enlargement", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "min_x_limit", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "max_x_limit", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "min_y_limit", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "max_y_limit", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
- 
-   nh_->get_parameter_or("active", p_active_, true);
-   nh_->get_parameter_or("use_scan", p_use_scan_, true);
-@@ -119,12 +120,19 @@
-         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using LaserScan topic");
-         // Sensor-data QoS: laser drivers / projection nodes publish best-effort;
-         // a reliable subscription would never match them.
-+        // The callbacks below take `const MessageT&`, a subscription callback
-+        // form rclcpp only accepts from Galactic on; Foxy's AnySubscription-
-+        // Callback knows only the shared_ptr forms. Subscribe with a
-+        // ConstSharedPtr lambda and dereference — identical delivery on both
-+        // distros, and the callback bodies stay untouched.
-         scan_sub_ = nh_->create_subscription<sensor_msgs::msg::LaserScan>(
--            "scan", rclcpp::SensorDataQoS(), std::bind(&ObstacleExtractor::scanCallback, this, std::placeholders::_1));
-+            "scan", rclcpp::SensorDataQoS(),
-+            [this](sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) { scanCallback(*scan_msg); });
-       }else if (p_use_pcl_){
-         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using PointCloud1 topic");
-         pcl_sub_ = nh_->create_subscription<sensor_msgs::msg::PointCloud>(
--            "pcl", 10, std::bind(&ObstacleExtractor::pclCallback, this, std::placeholders::_1));
-+            "pcl", 10,
-+            [this](sensor_msgs::msg::PointCloud::ConstSharedPtr pcl_msg) { pclCallback(*pcl_msg); });
-       }else if (p_use_pcl_2_){
-         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using PointCloud2 topic");
-         pcl2_sub_ = nh_->create_subscription<sensor_msgs::msg::PointCloud2>(
---- a/src/obstacle_tracker.cpp
-+++ b/src/obstacle_tracker.cpp
-@@ -34,6 +34,7 @@
-  */
- 
- #include "obstacle_detector/obstacle_tracker.h"
-+#include "obstacle_detector/utilities/rclcpp_compat.h"
- 
- #include <algorithm>
- #include <chrono>
-@@ -72,25 +73,25 @@
- void ObstacleTracker::updateParamsUtil(){
-   bool prev_active = p_active_;
- 
--  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("copy_segments", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "copy_segments", rclcpp::PARAMETER_BOOL);
-   // Before using compensate_robot_velocity, consider using pointcloud input from map frame instead of base_link frame
--  nh_->declare_parameter("compensate_robot_velocity", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("sensor_rate", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "compensate_robot_velocity", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "sensor_rate", rclcpp::PARAMETER_DOUBLE);
-   // loop_rate > 0 revives the upstream fixed-rate scheme (A-mode) for the
-   // rate-comparison experiment: a wall timer at loop_rate clocks
-   // predict+correct (re-using the retained measurement between scans) and
-   // publishes every tick. Absent or 0 keeps the P-2 measurement-driven mode.
--  nh_->declare_parameter("loop_rate", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
-+  obstacle_detector::declare_parameter_typed(nh_, "loop_rate", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
- 
--  nh_->declare_parameter("tracking_duration", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("min_correspondence_cost", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("radius_residual_weight", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("std_correspondence_dev", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("process_variance", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("process_rate_variance", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("measurement_variance", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "tracking_duration", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "min_correspondence_cost", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "radius_residual_weight", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "std_correspondence_dev", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "process_variance", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "process_rate_variance", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "measurement_variance", rclcpp::PARAMETER_DOUBLE);
- 
-   nh_->get_parameter_or("active", p_active_, true);
-   nh_->get_parameter_or("copy_segments", p_copy_segments_, true);
-@@ -149,11 +150,17 @@
-   if (p_active_ != prev_active) {
-     if (p_active_) {
-       if(p_compensate_robot_velocity_){
-+        // ConstSharedPtr BY VALUE: Foxy's subscription traits do not deduce the
-+        // message type through a `const ConstSharedPtr&` parameter (that form
-+        // arrived with Galactic). The callbacks themselves keep their
-+        // signatures — only the delivery spelling changes.
-         odom_sub_ = nh_->create_subscription<nav_msgs::msg::Odometry>(
--            "/odom", 10, std::bind(&ObstacleTracker::odomCallback, this, std::placeholders::_1));
-+            "/odom", 10,
-+            [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) { odomCallback(msg); });
-       }
-       obstacles_sub_ = nh_->create_subscription<obstacle_detector::msg::Obstacles>(
--            "raw_obstacles", 10, std::bind(&ObstacleTracker::obstaclesCallback, this, std::placeholders::_1));
-+            "raw_obstacles", 10,
-+            [this](obstacle_detector::msg::Obstacles::ConstSharedPtr msg) { obstaclesCallback(msg); });
-       obstacles_pub_ = nh_->create_publisher<obstacle_detector::msg::Obstacles>("tracked_obstacles", rclcpp::QoS(5));
-       obstacles_vis_pub_ = nh_->create_publisher<visualization_msgs::msg::MarkerArray>("tracked_obstacles_visualization", 10);
-     }
---- a/src/obstacle_publisher.cpp
-+++ b/src/obstacle_publisher.cpp
-@@ -34,6 +34,7 @@
-  */
- 
- #include "obstacle_detector/obstacle_publisher.h"
-+#include "obstacle_detector/utilities/rclcpp_compat.h"
- 
- using namespace std;
- using namespace obstacle_detector;
-@@ -63,13 +64,13 @@
- void ObstaclePublisher::updateParamsUtil() {
-   bool prev_active = p_active_;
- 
--  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("reset", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "reset", rclcpp::PARAMETER_BOOL);
-   // Before using compensate_robot_velocity, consider using pointcloud input from map frame instead of base_link frame
--  nh_->declare_parameter("fusion_example", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("fission_example", rclcpp::PARAMETER_BOOL);
--  nh_->declare_parameter("loop_rate", rclcpp::PARAMETER_DOUBLE);
--  nh_->declare_parameter("radius_margin", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "fusion_example", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "fission_example", rclcpp::PARAMETER_BOOL);
-+  obstacle_detector::declare_parameter_typed(nh_, "loop_rate", rclcpp::PARAMETER_DOUBLE);
-+  obstacle_detector::declare_parameter_typed(nh_, "radius_margin", rclcpp::PARAMETER_DOUBLE);
- 
-   nh_->get_parameter_or("active", p_active_, true);
-   nh_->get_parameter_or("reset", p_reset_, false);
-@@ -78,11 +79,11 @@
-   nh_->get_parameter_or("loop_rate", p_loop_rate_, 10.0);
-   nh_->get_parameter_or("radius_margin", p_radius_margin_, 0.25);
- 
--  nh_->declare_parameter("x_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
--  nh_->declare_parameter("y_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
--  nh_->declare_parameter("r_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
--  nh_->declare_parameter("vx_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
--  nh_->declare_parameter("vy_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
-+  obstacle_detector::declare_parameter_typed(nh_, "x_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
-+  obstacle_detector::declare_parameter_typed(nh_, "y_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
-+  obstacle_detector::declare_parameter_typed(nh_, "r_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
-+  obstacle_detector::declare_parameter_typed(nh_, "vx_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
-+  obstacle_detector::declare_parameter_typed(nh_, "vy_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
- 
-   nh_->get_parameter("x_vector", p_x_vector_);
-   nh_->get_parameter("y_vector", p_y_vector_);
-@@ -90,7 +91,7 @@
-   nh_->get_parameter("vx_vector", p_vx_vector_);
-   nh_->get_parameter("vy_vector", p_vy_vector_);
- 
--  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
-+  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
-   nh_->get_parameter_or("frame_id", p_frame_id_, string("map"));
- 
-   p_sampling_time_ = 1.0 / p_loop_rate_;
+diff --git a/include/obstacle_detector/utilities/rclcpp_compat.h b/include/obstacle_detector/utilities/rclcpp_compat.h
+new file mode 100644
+index 0000000..77855ad
 --- /dev/null
 +++ b/include/obstacle_detector/utilities/rclcpp_compat.h
 @@ -0,0 +1,70 @@
@@ -423,3 +226,218 @@ that drift predates this patch.
 +}
 +
 +}  // namespace obstacle_detector
+diff --git a/src/obstacle_extractor.cpp b/src/obstacle_extractor.cpp
+index 8741840..518c8d8 100644
+--- a/src/obstacle_extractor.cpp
++++ b/src/obstacle_extractor.cpp
+@@ -34,6 +34,7 @@
+  */
+ 
+ #include "obstacle_detector/obstacle_extractor.h"
++#include "obstacle_detector/utilities/rclcpp_compat.h"
+ #include "obstacle_detector/utilities/figure_fitting.h"
+ #include "obstacle_detector/utilities/math_utilities.h"
+ 
+@@ -65,29 +66,29 @@ ObstacleExtractor::~ObstacleExtractor() {
+ 
+ void ObstacleExtractor::updateParamsUtil(){
+   bool prev_active = p_active_;
+-  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("use_scan", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("use_pcl", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("use_pcl2", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("use_split_and_merge", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("circles_from_visibles", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("discard_converted_segments", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("transform_coordinates", rclcpp::PARAMETER_BOOL);
+-
+-  nh_->declare_parameter("min_group_points", rclcpp::PARAMETER_INTEGER);
+-
+-  nh_->declare_parameter("max_group_distance", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("distance_proportion", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_split_distance", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_merge_separation", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_merge_spread", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_circle_radius", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("radius_enlargement", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("min_x_limit", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_x_limit", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("min_y_limit", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("max_y_limit", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
++  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "use_scan", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "use_pcl", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "use_pcl2", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "use_split_and_merge", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "circles_from_visibles", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "discard_converted_segments", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "transform_coordinates", rclcpp::PARAMETER_BOOL);
++
++  obstacle_detector::declare_parameter_typed(nh_, "min_group_points", rclcpp::PARAMETER_INTEGER);
++
++  obstacle_detector::declare_parameter_typed(nh_, "max_group_distance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "distance_proportion", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_split_distance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_merge_separation", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_merge_spread", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_circle_radius", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "radius_enlargement", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "min_x_limit", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_x_limit", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "min_y_limit", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "max_y_limit", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
+ 
+   nh_->get_parameter_or("active", p_active_, true);
+   nh_->get_parameter_or("use_scan", p_use_scan_, true);
+@@ -119,12 +120,19 @@ void ObstacleExtractor::updateParamsUtil(){
+         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using LaserScan topic");
+         // Sensor-data QoS: laser drivers / projection nodes publish best-effort;
+         // a reliable subscription would never match them.
++        // The callbacks below take `const MessageT&`, a subscription callback
++        // form rclcpp only accepts from Galactic on; Foxy's AnySubscription-
++        // Callback knows only the shared_ptr forms. Subscribe with a
++        // ConstSharedPtr lambda and dereference — identical delivery on both
++        // distros, and the callback bodies stay untouched.
+         scan_sub_ = nh_->create_subscription<sensor_msgs::msg::LaserScan>(
+-            "scan", rclcpp::SensorDataQoS(), std::bind(&ObstacleExtractor::scanCallback, this, std::placeholders::_1));
++            "scan", rclcpp::SensorDataQoS(),
++            [this](sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) { scanCallback(*scan_msg); });
+       }else if (p_use_pcl_){
+         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using PointCloud1 topic");
+         pcl_sub_ = nh_->create_subscription<sensor_msgs::msg::PointCloud>(
+-            "pcl", 10, std::bind(&ObstacleExtractor::pclCallback, this, std::placeholders::_1));
++            "pcl", 10,
++            [this](sensor_msgs::msg::PointCloud::ConstSharedPtr pcl_msg) { pclCallback(*pcl_msg); });
+       }else if (p_use_pcl_2_){
+         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using PointCloud2 topic");
+         pcl2_sub_ = nh_->create_subscription<sensor_msgs::msg::PointCloud2>(
+diff --git a/src/obstacle_publisher.cpp b/src/obstacle_publisher.cpp
+index b81ba72..3a9d24a 100644
+--- a/src/obstacle_publisher.cpp
++++ b/src/obstacle_publisher.cpp
+@@ -34,6 +34,7 @@
+  */
+ 
+ #include "obstacle_detector/obstacle_publisher.h"
++#include "obstacle_detector/utilities/rclcpp_compat.h"
+ 
+ using namespace std;
+ using namespace obstacle_detector;
+@@ -63,13 +64,13 @@ ObstaclePublisher::~ObstaclePublisher() {
+ void ObstaclePublisher::updateParamsUtil() {
+   bool prev_active = p_active_;
+ 
+-  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("reset", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "reset", rclcpp::PARAMETER_BOOL);
+   // Before using compensate_robot_velocity, consider using pointcloud input from map frame instead of base_link frame
+-  nh_->declare_parameter("fusion_example", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("fission_example", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("loop_rate", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("radius_margin", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "fusion_example", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "fission_example", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "loop_rate", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "radius_margin", rclcpp::PARAMETER_DOUBLE);
+ 
+   nh_->get_parameter_or("active", p_active_, true);
+   nh_->get_parameter_or("reset", p_reset_, false);
+@@ -78,11 +79,11 @@ void ObstaclePublisher::updateParamsUtil() {
+   nh_->get_parameter_or("loop_rate", p_loop_rate_, 10.0);
+   nh_->get_parameter_or("radius_margin", p_radius_margin_, 0.25);
+ 
+-  nh_->declare_parameter("x_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+-  nh_->declare_parameter("y_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+-  nh_->declare_parameter("r_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+-  nh_->declare_parameter("vx_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+-  nh_->declare_parameter("vy_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "x_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "y_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "r_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "vx_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
++  obstacle_detector::declare_parameter_typed(nh_, "vy_vector", rclcpp::PARAMETER_DOUBLE_ARRAY);
+ 
+   nh_->get_parameter("x_vector", p_x_vector_);
+   nh_->get_parameter("y_vector", p_y_vector_);
+@@ -90,7 +91,7 @@ void ObstaclePublisher::updateParamsUtil() {
+   nh_->get_parameter("vx_vector", p_vx_vector_);
+   nh_->get_parameter("vy_vector", p_vy_vector_);
+ 
+-  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
++  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
+   nh_->get_parameter_or("frame_id", p_frame_id_, string("map"));
+ 
+   p_sampling_time_ = 1.0 / p_loop_rate_;
+diff --git a/src/obstacle_tracker.cpp b/src/obstacle_tracker.cpp
+index 99fe362..bc5243b 100644
+--- a/src/obstacle_tracker.cpp
++++ b/src/obstacle_tracker.cpp
+@@ -34,6 +34,7 @@
+  */
+ 
+ #include "obstacle_detector/obstacle_tracker.h"
++#include "obstacle_detector/utilities/rclcpp_compat.h"
+ 
+ using namespace std::chrono_literals;
+ using namespace obstacle_detector;
+@@ -67,24 +68,24 @@ ObstacleTracker::~ObstacleTracker() {
+ void ObstacleTracker::updateParamsUtil(){
+   bool prev_active = p_active_;
+ 
+-  nh_->declare_parameter("active", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("copy_segments", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "active", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "copy_segments", rclcpp::PARAMETER_BOOL);
+   // Before using compensate_robot_velocity, consider using pointcloud input from map frame instead of base_link frame
+-  nh_->declare_parameter("compensate_robot_velocity", rclcpp::PARAMETER_BOOL);
+-  nh_->declare_parameter("sensor_rate", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "compensate_robot_velocity", rclcpp::PARAMETER_BOOL);
++  obstacle_detector::declare_parameter_typed(nh_, "sensor_rate", rclcpp::PARAMETER_DOUBLE);
+   // P-2 removed the wall timer, so there is no loop for a rate to drive.
+   // The name stays declared so a config that still sets it gets an explicit
+   // warning below instead of being silently ignored.
+-  nh_->declare_parameter("loop_rate", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("frame_id", rclcpp::PARAMETER_STRING);
++  obstacle_detector::declare_parameter_typed(nh_, "loop_rate", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "frame_id", rclcpp::PARAMETER_STRING);
+ 
+-  nh_->declare_parameter("tracking_duration", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("min_correspondence_cost", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("radius_residual_weight", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("std_correspondence_dev", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("process_variance", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("process_rate_variance", rclcpp::PARAMETER_DOUBLE);
+-  nh_->declare_parameter("measurement_variance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "tracking_duration", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "min_correspondence_cost", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "radius_residual_weight", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "std_correspondence_dev", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "process_variance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "process_rate_variance", rclcpp::PARAMETER_DOUBLE);
++  obstacle_detector::declare_parameter_typed(nh_, "measurement_variance", rclcpp::PARAMETER_DOUBLE);
+ 
+   nh_->get_parameter_or("active", p_active_, true);
+   nh_->get_parameter_or("copy_segments", p_copy_segments_, true);
+@@ -127,11 +128,17 @@ void ObstacleTracker::updateParamsUtil(){
+   if (p_active_ != prev_active) {
+     if (p_active_) {
+       if(p_compensate_robot_velocity_){
++        // ConstSharedPtr BY VALUE: Foxy's subscription traits do not deduce the
++        // message type through a `const ConstSharedPtr&` parameter (that form
++        // arrived with Galactic). The callbacks themselves keep their
++        // signatures — only the delivery spelling changes.
+         odom_sub_ = nh_->create_subscription<nav_msgs::msg::Odometry>(
+-            "/odom", 10, std::bind(&ObstacleTracker::odomCallback, this, std::placeholders::_1));
++            "/odom", 10,
++            [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) { odomCallback(msg); });
+       }
+       obstacles_sub_ = nh_->create_subscription<obstacle_detector::msg::Obstacles>(
+-            "raw_obstacles", 10, std::bind(&ObstacleTracker::obstaclesCallback, this, std::placeholders::_1));
++            "raw_obstacles", 10,
++            [this](obstacle_detector::msg::Obstacles::ConstSharedPtr msg) { obstaclesCallback(msg); });
+       obstacles_pub_ = nh_->create_publisher<obstacle_detector::msg::Obstacles>("tracked_obstacles", rclcpp::QoS(5));
+       obstacles_vis_pub_ = nh_->create_publisher<visualization_msgs::msg::MarkerArray>("tracked_obstacles_visualization", 10);
+     }
