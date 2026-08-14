@@ -29,7 +29,7 @@ Ubuntu 22.04 with ROS 2 Humble, or Ubuntu 24.04 with ROS 2 Jazzy. Builds the
 whole workspace plus the MuJoCo simulator, so you can watch the detector work
 without a robot. Everything below is for this machine.
 
-### The robot's onboard computer — [`../doc/ros2_foxy_setup.md`](../doc/ros2_foxy_setup.md)
+### G1's onboard computer — ../doc/[ros2_foxy_setup.md](../doc/ros2_foxy_setup.md)
 
 Ubuntu 20.04 with **ROS 2 Foxy**, which is end-of-life. `ROS_DISTRO=foxy` in
 the commands below will not work: Foxy needs a different apt server
@@ -38,7 +38,7 @@ five packages skipped and no `--merge-install`. It also runs the real Mid-360
 driver and DLIO odometry, which this machine never does. That document is the
 complete build for it, ending in a 15-package workspace.
 
-### A laptop watching the robot over the network — [`../doc/ros2_teleop.md`](../doc/ros2_teleop.md)
+### A laptop watching the robot over the network — ../doc/[ros2_teleop.md](../doc/ros2_teleop.md)
 
 The onboard computer publishes and the laptop subscribes. Getting the two to
 see each other is its own job: both machines need the same `ROS_DOMAIN_ID` and
@@ -55,7 +55,7 @@ Ubuntu with ROS 2. **Pick your distro once** — every command below uses this
 variable, so nothing else has to change:
 
 ```bash
-export ROS_DISTRO=humble        # humble | jazzy | kilted | rolling — NOT foxy
+export ROS_DISTRO=<my_ros_distro>        # <my_ros_distro> = humble | jazzy | kilted | rolling — NOT foxy
 ```
 
 Put that line in your `~/.bashrc` so new terminals inherit it.
