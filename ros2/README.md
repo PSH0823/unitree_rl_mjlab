@@ -66,11 +66,29 @@ sudo apt-get update
 sudo apt-get install -y \
     build-essential cmake git \
     python3-pip python3-colcon-common-extensions python3-vcstool \
-    libarmadillo-dev libboost-all-dev \
-    libpcl-dev libeigen3-dev libyaml-cpp-dev libspdlog-dev libfmt-dev \
-    libssl-dev libcunit1-dev libomp-dev libpcap-dev libapr1-dev \
-    ros-humble-laser-geometry ros-humble-diagnostic-msgs \
-    python3-pyqtgraph python3-pyqt5 python3-pyqt5.qtopengl python3-matplotlib
+    python3-pytest python3-pytest-cov python3-numpy python3-yaml \
+    python3-pyqtgraph python3-pyqt5 python3-pyqt5.qtopengl python3-matplotlib \
+    libarmadillo-dev libboost-all-dev libpcl-dev libeigen3-dev \
+    libyaml-cpp-dev libspdlog-dev libfmt-dev libssl-dev libcunit1-dev \
+    libomp-dev libpcap-dev libapr1-dev \
+    ros-humble-ament-cmake ros-humble-ament-cmake-auto \
+    ros-humble-ament-cmake-gtest ros-humble-ament-lint-auto \
+    ros-humble-ament-lint-common \
+    ros-humble-diagnostic-msgs ros-humble-diagnostic-updater \
+    ros-humble-geometry-msgs ros-humble-laser-geometry \
+    ros-humble-launch ros-humble-launch-ros ros-humble-launch-testing \
+    ros-humble-launch-testing-ament-cmake ros-humble-launch-testing-ros \
+    ros-humble-message-filters ros-humble-nav-msgs \
+    ros-humble-pcl-conversions ros-humble-pcl-msgs \
+    ros-humble-rclcpp ros-humble-rclcpp-components ros-humble-rclpy \
+    ros-humble-rmw ros-humble-rmw-dds-common ros-humble-rmw-implementation \
+    ros-humble-robot-state-publisher ros-humble-rviz2 \
+    ros-humble-rosbag2 ros-humble-rosbag2-storage-default-plugins \
+    ros-humble-rosidl-default-generators ros-humble-rosidl-default-runtime \
+    ros-humble-sensor-msgs ros-humble-std-msgs ros-humble-std-srvs \
+    ros-humble-tf2 ros-humble-tf2-eigen ros-humble-tf2-geometry-msgs \
+    ros-humble-tf2-ros ros-humble-tf2-sensor-msgs \
+    ros-humble-visualization-msgs ros-humble-xacro
 ```
 
 The simulated LiDAR needs MuJoCo 3.5 or newer **on the system Python**:
@@ -250,6 +268,12 @@ def callback(msg):
 difference is the safety margin.
 
 Positions and velocities are in the `odom` frame.
+
+On `/obstacles_safe` the margin has two more parts on top of
+`radius_enlargement`: a fixed `0.051 m` and a term that grows with the
+obstacle's speed, so something moving fast is treated as bigger. Both live in
+`config/safety_obstacle_filter.yaml` as `fixed_inflation` and
+`latency_horizon`.
 
 ---
 
