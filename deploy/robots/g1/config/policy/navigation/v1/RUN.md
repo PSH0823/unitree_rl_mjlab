@@ -1,0 +1,120 @@
+# Navigation runtime
+
+Every ROS terminal must use the same `ROS_DOMAIN_ID` and
+`RMW_IMPLEMENTATION`.  The field setup uses `source ~/.g1_net_env`.
+
+## Simulation
+
+In every simulation terminal, first select the same loopback DDS config:
+
+```bash
+cd ~/unitree_rl_mjlab
+source /opt/ros/$ROS_DISTRO/setup.bash
+source ros2/install/setup.bash
+source ros2/sim_navigation_env.sh
+```
+
+The optional Conda environment is only needed in the MuJoCo terminal when
+that machine's graphics/runtime setup requires it.  Keep the perception,
+RViz, goal-view and `g1_ctrl` terminals on the system ROS Python environment.
+
+1. Start the ROS-enabled simulator:
+
+   ```bash
+   cd ~/unitree_rl_mjlab
+   source /opt/ros/$ROS_DISTRO/setup.bash
+   source ros2/install/setup.bash
+   ./simulate/build/unitree_mujoco
+   ```
+
+2. Start the controller in another terminal:
+
+   ```bash
+   cd ~/unitree_rl_mjlab
+   source /opt/ros/$ROS_DISTRO/setup.bash
+   source ros2/install/setup.bash
+   ./deploy/robots/g1/build/g1_ctrl --network=lo
+   ```
+
+   Press `2` for FixStand, `4` for CustomVelocity, then `5` for Navigation.
+   Number keys only follow transitions configured in `config/config.yaml`.
+
+3. Start simulated perception:
+
+   ```bash
+   cd ~/unitree_rl_mjlab/ros2
+   source /opt/ros/$ROS_DISTRO/setup.bash
+   source install/setup.bash
+   ros2 launch g1_perception_bringup bringup.launch.py source:=sim viz:=rviz
+   ```
+
+4. Start the interactive goal view:
+
+   ```bash
+   ros2 run dpcbf_plot_client navigation_goal_view
+   ```
+
+   Left-click and drag to set the initial position and heading. Right-click
+   stops and clears the goal. Navigation remains stopped until this first
+   external goal arrives. When `enable_random_goal` is true, random simulation
+   goals begin only after the externally supplied goal is fully reached.
+
+## Hardware
+
+Never source `ros2/sim_navigation_env.sh` in a hardware session.  The robot
+and operator laptop must instead have matching `ROS_DOMAIN_ID` and
+`RMW_IMPLEMENTATION` values in `~/.g1_net_env` (`rmw_fastrtps_cpp` in the
+field setup).
+
+1. On the robot computer, start `g1_ctrl`.  Replace `<control_nic>` with the
+   Unitree control interface reported by `ip link` (for example `enp5s0`; it
+   must not be `lo`):
+
+   ```bash
+   source ~/.g1_net_env
+   source /opt/ros/humble/setup.bash
+   cd "$G1_WS"
+   source install/setup.bash
+   cd ..
+   ./deploy/robots/g1/build/g1_ctrl --network=<control_nic>
+   ```
+
+   Hardware console-number transitions are deliberately disabled.  Use the
+   joystick: `LT + Up` for FixStand, then `RT + X` for CustomVelocity.  Keep
+   the velocity command at zero while LiDAR/LIO initializes.
+
+2. In another terminal on the robot computer, keep the robot stationary and
+   start LiDAR/LIO/perception:
+
+   ```bash
+   source ~/.g1_net_env
+   cd "$G1_WS"
+   source /opt/ros/humble/setup.bash
+   source install/setup.bash
+   ros2 launch g1_perception_bringup g1_perception_dpcbf.launch.py \
+       driver:=on lio:=dlio enable_plot_bridge:=true use_rviz:=false
+   ```
+
+   Wait until `/odom` and `/obstacles_safe` are updating.  The initial LIO
+   calibration must be performed while the robot is motionless.
+
+3. On the operator laptop, use the same field domain/RMW and start the goal
+   interface:
+
+   ```bash
+   source ~/.g1_net_env
+   source /opt/ros/humble/setup.bash
+   cd "$G1_WS"
+   source install/setup.bash
+   ros2 run dpcbf_plot_client navigation_goal_view
+   ```
+
+4. Press `RT + Y` on the robot joystick to enter Navigation.  The robot stays
+   at zero command until an external goal is received.  Left-click and drag
+   in the goal interface to send position and heading; right-click stops and
+   clears the goal.  `enable_random_goal` is ignored on hardware even if it is
+   true in the Navigation YAML.
+
+If `/odom`, TF or `/obstacles_safe` stops updating, Navigation stays selected
+and sends a zero velocity command. LowState loss, persistent bad tilt, or
+repeated low-level ONNX failure transitions to Passive.

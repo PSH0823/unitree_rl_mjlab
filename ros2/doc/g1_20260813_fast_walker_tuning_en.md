@@ -17,7 +17,7 @@ move. That is the only view in which "the fit is bad" can be separated from
 
 > Everything about the **network link** (Fast DDS, `ROS_DOMAIN_ID`, multicast,
 > peers mode, troubleshooting) stays in
-> [`g1_fastdds_field_manual_ko.md`](g1_fastdds_field_manual_ko.md). This
+> [`g1_first_day_field_runbook.md`](g1_first_day_field_runbook.md). This
 > document repeats only the minimum needed to get the terminals up, and
 > **does not touch `~/.bashrc` on either machine** — you source the
 > environment by hand in every terminal (§1.3).
@@ -1012,11 +1012,9 @@ so the next session knows what the numbers were fitted to.
 
 ## Related documents
 
-- [`g1_fastdds_field_manual_ko.md`](g1_fastdds_field_manual_ko.md) — the network
-  link, terminal setup, link troubleshooting (Korean)
-- [`dpcbf_plot_visualization.md`](dpcbf_plot_visualization.md) — the odom-frame
-  plot client
-- [`g1_two_computer_setup.md`](g1_two_computer_setup.md) — LiDAR IP,
-  `MID360_config.json`, staged bring-up
-- [`g1_hardware_preflight.md`](g1_hardware_preflight.md) — what each preflight
-  item means
+- [`g1_first_day_field_runbook.md`](g1_first_day_field_runbook.md) — field
+  network, staged bring-up and stop conditions
+- [`operator_runbook.md`](operator_runbook.md) — simulation and development
+  operations
+- [`g1_hardware_code_audit.md`](g1_hardware_code_audit.md) — verified hardware
+  path and remaining measurement gates

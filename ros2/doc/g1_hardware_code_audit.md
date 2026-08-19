@@ -19,9 +19,9 @@ until real data are observed.** It builds, launch files exist, stub tests
 pass, the simulation path works and the topics appear in `ros2 topic list` —
 none of that is evidence about a G1.
 
-Companion documents: [`g1_hardware_preflight.md`](g1_hardware_preflight.md)
-(what to find out first), [`g1_first_perception_experiment.md`](g1_first_perception_experiment.md)
-(the session), [`phase5a_seam_audit.md`](phase5a_seam_audit.md) (the sim/hw
+Companion documents: [`g1_first_day_field_runbook.md`](g1_first_day_field_runbook.md)
+(the field session), [`operator_runbook.md`](operator_runbook.md) (development
+operations), and [`phase5a_seam_audit.md`](phase5a_seam_audit.md) (the sim/hw
 contract diff, still accurate).
 
 ---

@@ -10,6 +10,8 @@
 #include "isaaclab/assets/articulation/articulation.h"
 #include "isaaclab/algorithms/algorithms.h"
 #include <iostream>
+#include <array>
+#include <mutex>
 #include "isaaclab/utils/utils.h"
 
 namespace isaaclab
@@ -65,6 +67,18 @@ public:
         action_manager->process_action(action);
     }
 
+    void set_external_velocity_command(const std::array<float, 3>& command)
+    {
+        std::lock_guard<std::mutex> lock(external_command_mutex_);
+        external_velocity_command_ = command;
+    }
+
+    std::array<float, 3> external_velocity_command() const
+    {
+        std::lock_guard<std::mutex> lock(external_command_mutex_);
+        return external_velocity_command_;
+    }
+
     float step_dt;
     
     YAML::Node cfg;
@@ -75,6 +89,10 @@ public:
     std::unique_ptr<Algorithms> alg;
     long episode_length = 0;
     float global_phase = 0.0f;
+
+private:
+    mutable std::mutex external_command_mutex_;
+    std::array<float, 3> external_velocity_command_{0.0f, 0.0f, 0.0f};
 };
 
 };

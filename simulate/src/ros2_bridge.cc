@@ -14,6 +14,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rosgraph_msgs/msg/clock.hpp>
 #include <sim_msgs/msg/mj_state.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include <filesystem>
 
@@ -79,6 +80,9 @@ struct SimRos2Bridge::Impl {
   double last_state = -1.0;
   double last_gt = -1.0;
   int idle_ticks = 0;
+  rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr marker_sub;
+  visualization_msgs::msg::MarkerArray latest_markers;
+  std::chrono::steady_clock::time_point marker_received{};
 };
 
 SimRos2Bridge::SimRos2Bridge() : impl_(new Impl) {
@@ -91,6 +95,7 @@ SimRos2Bridge::SimRos2Bridge() : impl_(new Impl) {
     const std::string uri =
         "<CycloneDDS><Domain><General><Interfaces><NetworkInterface name=\"" +
         param::config.interface +
+        (param::config.interface == "lo" ? "\" multicast=\"true" : "") +
         "\"/></Interfaces></General><Discovery>"
         "<ParticipantIndex>auto</ParticipantIndex>"
         "<MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>"
@@ -113,6 +118,13 @@ SimRos2Bridge::SimRos2Bridge() : impl_(new Impl) {
       rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
   impl_->gt_pub = impl_->node->create_publisher<obstacle_detector::msg::Obstacles>(
       "/sim/gt_obstacles", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  impl_->marker_sub = impl_->node->create_subscription<
+      visualization_msgs::msg::MarkerArray>(
+      "/navigation/markers", rclcpp::QoS(rclcpp::KeepLast(1)).best_effort(),
+      [this](visualization_msgs::msg::MarkerArray::ConstSharedPtr msg) {
+        impl_->latest_markers = *msg;
+        impl_->marker_received = std::chrono::steady_clock::now();
+      });
   std::cout << "[ros2_bridge] publishing /clock /sim/mj_state /sim/gt_obstacles"
             << std::endl;
 }
@@ -126,6 +138,7 @@ void SimRos2Bridge::SpinOnce(
     const mjModel* m, const mjData* d,
     const std::function<std::vector<dpcbf::DynamicObstacle>()>& snapshot) {
   if (!m || !d) return;
+  rclcpp::spin_some(impl_->node);
   const double t = d->time;
 
   // /clock — sim-time cadence, plus a keep-alive while paused so late
@@ -172,6 +185,81 @@ void SimRos2Bridge::SpinOnce(
     }
     impl_->gt_pub->publish(msg);
     impl_->last_gt = t;
+  }
+}
+
+void SimRos2Bridge::UpdateNavigationScene(const mjModel* m,
+                                          mjvScene* scene) {
+  if (!m || !scene) return;
+  scene->ngeom = 0;
+  if (impl_->marker_received.time_since_epoch().count() == 0 ||
+      std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                    impl_->marker_received).count() > 0.5) {
+    return;
+  }
+  auto add_connector = [&](int type, double width,
+                           const geometry_msgs::msg::Point& a,
+                           const geometry_msgs::msg::Point& b,
+                           const std_msgs::msg::ColorRGBA& color) {
+    if (scene->ngeom >= scene->maxgeom) return;
+    mjvGeom* geom = &scene->geoms[scene->ngeom++];
+    mjv_initGeom(geom, type, nullptr, nullptr, nullptr,
+                 const_cast<float*>(&color.r));
+    const mjtNum from[3] = {a.x, a.y, a.z};
+    const mjtNum to[3] = {b.x, b.y, b.z};
+    mjv_connector(geom, type, width, from, to);
+    geom->category = mjCAT_DECOR;
+  };
+  for (const auto& marker : impl_->latest_markers.markers) {
+    if (marker.action == visualization_msgs::msg::Marker::DELETEALL) continue;
+    if (marker.type == visualization_msgs::msg::Marker::LINE_STRIP) {
+      if (marker.ns == "relative_velocity_vector") continue;
+      const bool flat_line = marker.ns == "dpcbf_boundary" ||
+                             marker.ns == "goal_outline";
+      for (std::size_t i = 1; i < marker.points.size(); ++i) {
+        add_connector(flat_line ? mjGEOM_LINE : mjGEOM_CAPSULE,
+                      flat_line ? std::max(1.0, marker.scale.x * 100.0)
+                                : std::max(0.003, marker.scale.x * 0.5),
+                      marker.points[i - 1], marker.points[i], marker.color);
+      }
+    } else if (marker.type == visualization_msgs::msg::Marker::ARROW &&
+               marker.points.size() >= 2) {
+      add_connector(mjGEOM_ARROW, std::max(0.005, marker.scale.x * 0.5),
+                    marker.points[0], marker.points[1], marker.color);
+    } else if ((marker.type == visualization_msgs::msg::Marker::CYLINDER ||
+                marker.type == visualization_msgs::msg::Marker::CUBE ||
+                marker.type == visualization_msgs::msg::Marker::SPHERE) &&
+               scene->ngeom < scene->maxgeom) {
+      // ROS Marker scales are full x/y/z extents.  MuJoCo primitive sizes are
+      // type-specific: cylinder=(radius, half-height, unused), sphere=(radius,
+      // unused, unused), box=(half-x, half-y, half-z).  Treating every marker
+      // like a box made a 0.6 m-wide goal disk incorrectly 0.6 m tall.
+      mjtNum size[3] = {0.0, 0.0, 0.0};
+      if (marker.type == visualization_msgs::msg::Marker::CYLINDER) {
+        size[0] = 0.5 * marker.scale.x;
+        size[1] = 0.5 * marker.scale.z;
+      } else if (marker.type == visualization_msgs::msg::Marker::SPHERE) {
+        size[0] = 0.5 * marker.scale.x;
+      } else {
+        size[0] = 0.5 * marker.scale.x;
+        size[1] = 0.5 * marker.scale.y;
+        size[2] = 0.5 * marker.scale.z;
+      }
+      mjtNum pos[3] = {marker.pose.position.x, marker.pose.position.y,
+                       marker.pose.position.z};
+      mjtNum quat[4] = {marker.pose.orientation.w, marker.pose.orientation.x,
+                        marker.pose.orientation.y, marker.pose.orientation.z};
+      mjtNum mat[9];
+      mju_quat2Mat(mat, quat);
+      int geom_type = marker.type == visualization_msgs::msg::Marker::CYLINDER
+                          ? mjGEOM_CYLINDER
+                          : marker.type == visualization_msgs::msg::Marker::CUBE
+                                ? mjGEOM_BOX : mjGEOM_SPHERE;
+      mjvGeom* geom = &scene->geoms[scene->ngeom++];
+      mjv_initGeom(geom, geom_type, size, pos, mat,
+                   const_cast<float*>(&marker.color.r));
+      geom->category = mjCAT_DECOR;
+    }
   }
 }
 

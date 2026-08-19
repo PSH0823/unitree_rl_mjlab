@@ -15,14 +15,17 @@ dynamic_obstacles:
 
   # A radius and a constant speed are sampled once per obstacle at startup.
   radius_range: [0.2, 0.3]         # meters (cylinder only)
-  speed_range: [0.0, 0.3]          # meters/second
+  speed_range: [0.0, 0.8]          # meters/second
   collision_enabled: true          # physical contact between robot and obstacles
   rgba: [0.1, 0.4, 1.0, 0.45]      # translucent blue (cylinder only)
   height: 1.5                      # meters (cylinder height; also arena wall height)
   random_seed: 42                  # same value reproduces the same obstacle set
 
   human:
-    height_range: [1.60, 1.85]     # standing height, meters; the whole body scales with it
+    # Final standing height in meters, sampled once per person. This uniformly
+    # scales x/y/z part positions, capsule endpoints, radii and semi-axes—not
+    # only the vertical height—so the complete connected body keeps its shape.
+    height_range: [1.40, 1.80]
     rgba: [0.85, 0.55, 0.40, 1.0]
     # Yaw follows the walking direction (and turns on a wall bounce). Matters
     # because a person is ~0.50 m across the shoulders but only ~0.24 m deep,
@@ -35,7 +38,7 @@ dynamic_obstacles:
     # G1 starts at (0, 0). With this center, the arena spans x=[1, 11]
     # and y=[-5, 5], so the robot starts 1 m outside the left boundary.
     center: [0.0, 0.0]
-    show_boundary: true
+    show_boundary: false
     boundary_thickness: 0.04       # meters; visual only
     boundary_rgba: [0.2, 0.7, 1.0, 0.12]
 
@@ -44,7 +47,7 @@ robot:
   k_mu: 1                          # 1
   k_lambda: 0.5                    # 0.5
   r_rob: 0.30                      # meters
-  p_max: 3.0                       # obstacle detection radius, meters
+  p_max: 5.0                       # obstacle detection radius, meters
 
   # These match the velocity-command ranges used to train the selected policy.
   v_s_max: 2.0
@@ -64,6 +67,10 @@ robot:
 
 qp_parameters:
   enabled: true
+  # Navigation commands are generated inside g1_ctrl.  Keep the legacy
+  # simulator-side joystick QP available, but bypass it while Navigation is
+  # evaluated so two independent filters are never stacked.
+  simulate_filter_enabled: false
 
   k_a_s: 1.0
   k_a_l: 1.0
@@ -87,7 +94,7 @@ qp_parameters:
   slack_weight: 1000000
 
 visualization:
-  enabled: true
+  enabled: false
   window_name: "DPCBF Top-Down and Velocity Boundaries"
   window_width: 1500
   window_height: 900

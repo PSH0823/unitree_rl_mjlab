@@ -10,9 +10,12 @@ FSM:
     CustomVelocity:
       id: 4
       type: RLBase
+    Navigation:
+      id: 5
+      type: Navigation
 
     Mimic_Dance1_subject2:
-      id: 5
+      id: 6
       type: Mimic
 
 
@@ -87,6 +90,19 @@ FSM:
 
   CustomVelocity:
     transitions: 
+      Navigation: RT + Y.on_pressed
       Passive: LT + B.on_pressed
 
     policy_dir: config/policy/velocity/v1
+
+  Navigation:
+    transitions:
+      CustomVelocity: RT + X.on_pressed
+      Passive: LT + B.on_pressed
+
+    policy_dir: config/policy/navigation/v1
+
+console_fsm_control:
+  enabled: true
+  simulation_only: true
+  require_configured_transition: true

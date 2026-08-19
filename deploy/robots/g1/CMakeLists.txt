@@ -9,6 +9,12 @@ find_package(unitree_sdk2 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(obstacle_detector REQUIRED)
 
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     set(ONNXRUNTIME_DIR "${PROJECT_SOURCE_DIR}/../../thirdparty/onnxruntime-linux-x64-1.22.0")
@@ -24,6 +30,8 @@ include_directories(
   ${ONNXRUNTIME_DIR}/include
   ${PROJECT_SOURCE_DIR}/../../include/
   ${PROJECT_SOURCE_DIR}/../../thirdparty/cnpy
+  ${PROJECT_SOURCE_DIR}/../../../dpcbf/include
+  ${PROJECT_SOURCE_DIR}/../../../ros2/src/g1_perception/dpcbf_ros_adapter/include
 )
 
 file(GLOB CNPY_SRC ${PROJECT_SOURCE_DIR}/../../thirdparty/cnpy/*.cpp)
@@ -49,6 +57,14 @@ file(GLOB_RECURSE ADD_SRC_LIST
 )
 
 add_library(${PROJECT_NAME}_lib ${ADD_SRC_LIST})
-link_libraries(${PROJECT_NAME}_lib)
+target_link_libraries(${PROJECT_NAME}_lib PUBLIC
+  rclcpp::rclcpp
+  ${nav_msgs_TARGETS}
+  ${geometry_msgs_TARGETS}
+  ${std_msgs_TARGETS}
+  ${visualization_msgs_TARGETS}
+  ${obstacle_detector_TARGETS}
+)
 
 add_executable(g1_ctrl main.cpp)
+target_link_libraries(g1_ctrl PRIVATE ${PROJECT_NAME}_lib)

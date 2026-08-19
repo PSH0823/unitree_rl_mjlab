@@ -1225,13 +1225,12 @@ adapter's mode, staleness state and `GetObstacles` latency histogram.
 ## 8. Hardware path, without hardware
 
 > **Going to the robot?** This section is the *dev-machine* view. The robot
-> session has three documents of its own, and they are the ones to read:
+> session has dedicated field documents, and they are the ones to read:
 >
 > | Document | For |
 > |---|---|
-> | [`g1_hardware_preflight.md`](g1_hardware_preflight.md) | what you must find out **before** the robot is powered — platform, LiDAR, network topology, safety prerequisites, and the list of parameters that are *not* calibrated for hardware |
+> | [`g1_first_day_field_runbook.md`](g1_first_day_field_runbook.md) | preflight, network setup, staged field session and stop conditions |
 > | [`g1_hardware_code_audit.md`](g1_hardware_code_audit.md) | what the hardware path actually contains, edge by edge, with every claim labelled verified-from-source / verified-by-test / **not measured** / blocked |
-> | [`g1_first_perception_experiment.md`](g1_first_perception_experiment.md) | the staged session itself (stages 0–14), each with purpose, preconditions, exact commands, expected output, success criterion, failure symptoms, stop condition and files to save |
 > | [`phase5b_checklists.md`](phase5b_checklists.md) | the block-structured capture plan the stages above expand on; still the authority on props, survey convention and per-block bags |
 >
 > The Phase-5C toolkit, all non-actuating, all runnable as

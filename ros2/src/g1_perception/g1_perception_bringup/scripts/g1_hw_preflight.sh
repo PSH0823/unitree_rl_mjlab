@@ -328,7 +328,7 @@ if [ "$PLACEHOLDER" = 1 ]; then
 fi
 if [ "$FAILS" -gt 0 ]; then
   printf '\nPREFLIGHT FAILED — do not launch. Fix the FAIL lines above; each names\n'
-  printf 'the experiment stage it blocks (doc/g1_first_perception_experiment.md).\n'
+  printf 'the experiment stage it blocks (doc/g1_first_day_field_runbook.md).\n'
   exit 1
 fi
 printf '\nPREFLIGHT PASSED. This clears the checks a stationary machine can make.\n'

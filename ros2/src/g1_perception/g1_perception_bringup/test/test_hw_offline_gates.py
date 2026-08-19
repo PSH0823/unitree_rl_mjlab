@@ -18,7 +18,7 @@ guarantees below are checked on every build rather than on robot day.
   9  every hardware launch file constructs
  10  the diagnostics no-data rule is ERROR, not silence
 
-Hardware-dependent checks live in doc/g1_first_perception_experiment.md and
+Hardware-dependent checks live in doc/g1_first_day_field_runbook.md and
 are run by hand on the robot. Nothing here touches a device.
 
 Exit 0 pass, 1 fail.
@@ -478,7 +478,7 @@ def main():
     print('\nAll offline hardware gates pass. NOTE: these are the checks a '
           'machine with no robot can make.\nEverything about the real sensor, '
           'the real mount, real odometry and real timing is\nunverified until '
-          'doc/g1_first_perception_experiment.md is executed.')
+          'doc/g1_first_day_field_runbook.md is executed.')
     sys.exit(0)
 
 

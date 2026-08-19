@@ -11,10 +11,10 @@
 # self-hit data.
 /**:
   ros__parameters:
-    min_x: -0.50
-    max_x: 0.50
-    min_y: -0.50
-    max_y: 0.50
+    min_x: -0.40
+    max_x: 0.40
+    min_y: -0.40
+    max_y: 0.40
     min_z: -2.0
     max_z: 1.05
     negative: true

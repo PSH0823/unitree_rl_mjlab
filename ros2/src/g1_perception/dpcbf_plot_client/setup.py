@@ -36,6 +36,8 @@ setup(
             # noisy?), different frame, and it must stay runnable when the
             # control seam is absent.
             'dpcbf_scan_view = dpcbf_plot_client.scan_view:main',
+            'navigation_goal_view = '
+            'dpcbf_plot_client.navigation_goal_view:main',
         ],
     },
 )

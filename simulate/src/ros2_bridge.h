@@ -24,6 +24,8 @@ typedef struct mjModel_ mjModel;
 typedef struct mjData_ mjData;
 struct mjSpec_;
 typedef struct mjSpec_ mjSpec;
+struct mjvScene_;
+typedef struct mjvScene_ mjvScene;
 
 // Saves the compiled spec as the mirror model XML. Called from LoadModel
 // after mj_compile, before mj_deleteSpec. Destination:
@@ -43,6 +45,10 @@ class SimRos2Bridge {
   void SpinOnce(
       const mjModel* m, const mjData* d,
       const std::function<std::vector<dpcbf::DynamicObstacle>()>& snapshot);
+
+  // Converts the latest /navigation/markers snapshot into MuJoCo decorative
+  // geoms.  The caller holds Simulate::mtx while this writes user_scene.
+  void UpdateNavigationScene(const mjModel* m, mjvScene* user_scene);
 
  private:
   struct Impl;

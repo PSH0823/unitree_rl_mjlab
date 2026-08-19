@@ -154,10 +154,13 @@ namespace
   // model and data
   mjModel *m = nullptr;
   mjData *d = nullptr;
+  mjvScene navigation_user_scene;
+  bool navigation_user_scene_ready = false;
 
   dpcbf::DynamicObstacleManager dynamic_obstacles;
   dpcbf::DpcbfSafetyFilter safety_filter;
   dpcbf::DpcbfVisualizer dpcbf_visualizer;
+  bool simulate_qp_filter_enabled = true;
 
   // control noise variables
   mjtNum *ctrlnoise = nullptr;
@@ -816,6 +819,10 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
     if (d)
     {
       sim->Load(m, d, filename);
+      mjv_defaultScene(&navigation_user_scene);
+      mjv_makeScene(m, &navigation_user_scene, 2048);
+      sim->user_scn = &navigation_user_scene;
+      navigation_user_scene_ready = true;
       dynamic_obstacles.BindModel(m, d);
       mj_forward(m, d);
 
@@ -834,6 +841,10 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
 
   // delete everything we allocated
   free(ctrlnoise);
+  if (navigation_user_scene_ready) {
+    mjv_freeScene(&navigation_user_scene);
+    navigation_user_scene_ready = false;
+  }
   mj_deleteData(d);
   mj_deleteModel(m);
 
@@ -842,6 +853,7 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
 
 void *UnitreeSdk2BridgeThread(void *arg)
 {
+  auto* sim = static_cast<mj::Simulate*>(arg);
   // Wait for mujoco data
   while (true)
   {
@@ -1014,8 +1026,14 @@ void *UnitreeSdk2BridgeThread(void *arg)
     const auto desired = dra::AxesToDesired(lx, ly, rx, seam_limits);
     // §10.3 degrade ramp applied at the call site, before Filter() (§10.5).
     const auto scaled = dra::ScaleDesired(desired, snap.command_scale);
-    const auto filtered = safety_filter.Filter(robot, scaled, snap.obstacles);
-    dpcbf_visualizer.Update(robot, snap.obstacles, filtered);
+    dpcbf::SafetyFilterResult filtered;
+    if (simulate_qp_filter_enabled) {
+      filtered = safety_filter.Filter(robot, scaled, snap.obstacles);
+      dpcbf_visualizer.Update(robot, snap.obstacles, filtered);
+    } else {
+      filtered.command = scaled;
+      filtered.solved = true;
+    }
     const auto axes = dra::CommandToAxes(filtered.command, seam_limits);
     if (viz_publisher) {
       // Single-caller by design (same contract as GetObstacles), so a plain
@@ -1092,8 +1110,14 @@ void *UnitreeSdk2BridgeThread(void *arg)
     const auto desired = dra::AxesToDesired(lx, ly, rx, seam_limits);
     const auto obstacle_states = oracle_provider();
     const dpcbf::RobotState robot = ReadRobotGroundTruth(m, d, dpcbf_body_id);
-    const auto filtered = safety_filter.Filter(robot, desired, obstacle_states);
-    dpcbf_visualizer.Update(robot, obstacle_states, filtered);
+    dpcbf::SafetyFilterResult filtered;
+    if (simulate_qp_filter_enabled) {
+      filtered = safety_filter.Filter(robot, desired, obstacle_states);
+      dpcbf_visualizer.Update(robot, obstacle_states, filtered);
+    } else {
+      filtered.command = desired;
+      filtered.solved = true;
+    }
     const auto axes = dra::CommandToAxes(filtered.command, seam_limits);
     if (filter_io_log && filter_io_log->enabled()) {
       dra::FilterIoPrefix prefix{};
@@ -1173,6 +1197,10 @@ void *UnitreeSdk2BridgeThread(void *arg)
   while (true)
   {
     ros2_bridge.SpinOnce(m, d, [] { return dynamic_obstacles.Snapshot(); });
+    if (sim && navigation_user_scene_ready) {
+      const std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+      ros2_bridge.UpdateNavigationScene(m, &navigation_user_scene);
+    }
     usleep(1000);
   }
 #else
@@ -1254,6 +1282,9 @@ int main(int argc, char **argv)
     const auto dpcbf_config = proj_dir.parent_path() / "dpcbf/config/dpcbf_config.yaml";
     dynamic_obstacles.LoadConfig(dpcbf_config);
     safety_filter.LoadConfig(dpcbf_config);
+    const YAML::Node root = YAML::LoadFile(dpcbf_config.string());
+    simulate_qp_filter_enabled = root["qp_parameters"]
+        ["simulate_filter_enabled"].as<bool>(true);
     dpcbf_visualizer.LoadConfig(dpcbf_config);
   } catch (const std::exception& error) {
     std::cerr << "Failed to load dynamic obstacle configuration: " << error.what() << '\n';
@@ -1269,7 +1300,7 @@ int main(int argc, char **argv)
     std::make_unique<mj::GlfwAdapter>(),
     &cam, &opt, &pert, /* is_passive = */ false);
 
-  std::thread unitree_thread(UnitreeSdk2BridgeThread, nullptr);
+  std::thread unitree_thread(UnitreeSdk2BridgeThread, sim.get());
 
   // start physics thread
   std::thread physicsthreadhandle(&PhysicsThread, sim.get(), param::config.robot_scene.c_str());

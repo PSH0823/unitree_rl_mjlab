@@ -1,0 +1,65 @@
+high_level_dt: 0.1
+goal_radius: 0.35
+goal_heading_tolerance_deg: 10.0
+
+# Navigation always waits for the first external /navigation/goal. After that
+# goal is fully reached (position + heading), this option generates the next
+# goal automatically. Random goals are additionally gated by --network=lo and
+# can never be generated on hardware by changing this file accidentally.
+enable_random_goal: false
+random_goal_margin: 0.6
+random_seed: 42
+
+topics:
+  odometry: /odom
+  obstacles: /obstacles_safe
+  goal: /navigation/goal
+  stop: /navigation/stop
+  markers: /navigation/markers
+
+frames:
+  world: odom
+  robot: base_link
+
+safety:
+  command_timeout: 0.25
+  obstacle_timeout: 0.5
+  odometry_timeout: 0.2
+  sensor_loss_behavior: zero_command
+  auto_exit_on_sensor_loss: false
+  collision_stop:
+    enabled: false
+    surface_distance: 0.15
+  tilt_protection:
+    enabled: true
+    max_angle: 1.0
+    duration: 0.1
+  invalid_low_level_output_limit: 3
+
+visualization:
+  enabled: true
+  rate_hz: 20.0
+  relative_velocity_arrow_seconds: 1.0
+  parabola_lateral_limit: 1.0
+  parabola_backward_limit: 1.5
+  command_rgba: [1.0, 0.0, 0.0, 0.7]
+  # Palette sampled/approximated from the supplied mint/sage reference.
+  goal_fill_rgba: [0.58, 0.88, 0.68, 0.22]
+  goal_outline_rgba: [0.37, 0.50, 0.41, 0.95]
+  goal_pulse_rgba: [0.61, 0.94, 0.70, 1.0]
+  goal_center_rgba: [0.82, 0.89, 0.85, 1.0]
+  goal_pulse_min_radius: 0.08
+  goal_pulse_max_radius: 0.10
+  goal_pulse_period: 1.2
+  # Percentage of the base post/sphere dimensions, sharing the ring phase.
+  goal_center_pulse_min_percent: 95.0
+  goal_center_pulse_max_percent: 110.0
+  goal_heading_line_width: 0.025
+  # Suspended downward cone and sphere. Neither touches the floor or the
+  # other object, even at the maximum pulse percentage above.
+  goal_cone_tip_height: 0.10
+  goal_cone_height: 0.15
+  goal_cone_top_radius: 0.025
+  goal_cone_slices: 12
+  goal_sphere_center_height: 0.35
+  goal_sphere_radius: 0.05

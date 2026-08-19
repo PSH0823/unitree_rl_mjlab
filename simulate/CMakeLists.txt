@@ -72,6 +72,7 @@ if(UNITREE_MUJOCO_WITH_ROS2)
   find_package(rosgraph_msgs REQUIRED)
   find_package(sim_msgs REQUIRED)
   find_package(obstacle_detector REQUIRED)
+  find_package(visualization_msgs REQUIRED)
   find_package(dpcbf_ros_adapter REQUIRED)
   target_sources(unitree_mujoco PRIVATE src/ros2_bridge.cc)
   target_compile_definitions(unitree_mujoco PRIVATE UNITREE_MUJOCO_WITH_ROS2)
@@ -80,6 +81,7 @@ if(UNITREE_MUJOCO_WITH_ROS2)
     ${rosgraph_msgs_TARGETS}
     ${sim_msgs_TARGETS}
     ${obstacle_detector_TARGETS}
+    ${visualization_msgs_TARGETS}
     dpcbf_ros_adapter::dpcbf_ros_adapter
   )
 

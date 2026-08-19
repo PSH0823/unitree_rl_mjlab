@@ -135,6 +135,12 @@ REGISTER_OBSERVATION(velocity_commands)
     return obs;
 }
 
+REGISTER_OBSERVATION(external_velocity_commands)
+{
+    const auto command = env->external_velocity_command();
+    return std::vector<float>(command.begin(), command.end());
+}
+
 REGISTER_OBSERVATION(gait_phase)
 {
     float period = params["period"].as<float>();
@@ -161,6 +167,23 @@ REGISTER_OBSERVATION(gait_phase)
     }
 
     return obs;
+}
+
+REGISTER_OBSERVATION(external_gait_phase)
+{
+    float period = params["period"].as<float>();
+    float delta_phase = env->step_dt * (1.0f / period);
+    env->global_phase = std::fmod(env->global_phase + delta_phase, 1.0f);
+
+    const auto cmd = env->external_velocity_command();
+    const float cmd_norm = std::sqrt(
+        cmd[0] * cmd[0] + cmd[1] * cmd[1] + cmd[2] * cmd[2]);
+    if (cmd_norm < 0.1f) {
+        return std::vector<float>{0.0f, 0.0f};
+    }
+    return std::vector<float>{
+        static_cast<float>(std::sin(env->global_phase * 2 * M_PI)),
+        static_cast<float>(std::cos(env->global_phase * 2 * M_PI))};
 }
 
 }
