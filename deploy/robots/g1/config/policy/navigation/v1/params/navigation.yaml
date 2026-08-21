@@ -7,6 +7,15 @@ goal_heading_tolerance_deg: 10.0
 # goal automatically. Random goals are additionally gated by --network=lo and
 # can never be generated on hardware by changing this file accidentally.
 enable_random_goal: false
+
+# When random goals are disabled, preserve a fully reached goal. The robot
+# normally commands zero, but resumes Navigation if a selected obstacle is
+# approaching within this surface-to-surface distance, then returns to the
+# preserved position and heading. Right-click Stop still clears the goal.
+hold_goal_after_reaching: true
+goal_hold_obstacle_trigger_distance: 1.2
+goal_hold_min_closing_speed: 0.05
+
 random_goal_margin: 0.6
 random_seed: 42
 

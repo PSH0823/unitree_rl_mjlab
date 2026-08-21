@@ -57,7 +57,10 @@ RViz, goal-view and `g1_ctrl` terminals on the system ROS Python environment.
    Left-click and drag to set the initial position and heading. Right-click
    stops and clears the goal. Navigation remains stopped until this first
    external goal arrives. When `enable_random_goal` is true, random simulation
-   goals begin only after the externally supplied goal is fully reached.
+   goals begin only after the externally supplied goal is fully reached. When
+   random goals are disabled and `hold_goal_after_reaching` is true, the
+   reached pose is retained: commands remain zero unless a nearby obstacle is
+   approaching, in which case Navigation avoids it and returns to that pose.
 
 ## Hardware
 
@@ -79,9 +82,13 @@ field setup).
    ./deploy/robots/g1/build/g1_ctrl --network=<control_nic>
    ```
 
-   Hardware console-number transitions are deliberately disabled.  Use the
-   joystick: `LT + Up` for FixStand, then `RT + X` for CustomVelocity.  Keep
-   the velocity command at zero while LiDAR/LIO initializes.
+   Hardware console-number transitions are disabled by default. Use the
+   joystick: `LT + Up` for FixStand, then `RT + X` for CustomVelocity. Keep
+   the velocity command at zero while LiDAR/LIO initializes. To enable the
+   same numeric FSM commands on hardware, set
+   `console_fsm_control.simulation_only: false` in `config/config.yaml` and
+   restart `g1_ctrl`; numeric commands still work only for transitions listed
+   under the current FSM state.
 
 2. In another terminal on the robot computer, keep the robot stationary and
    start LiDAR/LIO/perception:
@@ -118,3 +125,7 @@ field setup).
 If `/odom`, TF or `/obstacles_safe` stops updating, Navigation stays selected
 and sends a zero velocity command. LowState loss, persistent bad tilt, or
 repeated low-level ONNX failure transitions to Passive.
+
+Navigation intentionally has no direct operator transition to Passive. Exit
+with `RT + X` to CustomVelocity first, then use `LT + B` for Passive. Automatic
+Passive transitions for the hard faults listed above remain active.

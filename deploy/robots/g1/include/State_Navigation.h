@@ -56,10 +56,16 @@ private:
     bool UpdateHighLevel();
     void SetZeroCommand();
     void CreateRandomGoal(const RobotSnapshot& robot);
-    std::vector<float> BuildObservation(
+    bool HasApproachingGoalHoldThreat(
+        const RobotSnapshot& robot,
+        const std::vector<dpcbf_ros_adapter::BoundaryObstacle>& selected) const;
+    std::vector<float> BuildNodeObservation(
         const RobotSnapshot& robot,
         const GoalSnapshot& goal,
         const std::vector<dpcbf_ros_adapter::BoundaryObstacle>& selected) const;
+    std::vector<float> BuildLocalState(
+        const RobotSnapshot& robot,
+        const GoalSnapshot& goal) const;
     void PublishMarkers(
         const RobotSnapshot& robot,
         const GoalSnapshot& goal,
@@ -104,6 +110,9 @@ private:
     double obstacle_timeout_ = 0.5, odometry_timeout_ = 0.2;
     double command_timeout_ = 0.25;
     bool enable_random_goal_ = false;
+    bool hold_goal_after_reaching_ = true;
+    double goal_hold_obstacle_trigger_distance_ = 1.0;
+    double goal_hold_min_closing_speed_ = 0.05;
     double random_goal_margin_ = 0.6;
     bool collision_stop_enabled_ = true;
     double collision_stop_distance_ = 0.15;

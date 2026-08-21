@@ -85,48 +85,126 @@ geometry_msgs::msg::Point Point(double x, double y, double z) {
 
 class NavigationOrtRunner {
 public:
-    explicit NavigationOrtRunner(const std::filesystem::path& model_path)
+    NavigationOrtRunner(const std::filesystem::path& encoder_path,
+                        const std::filesystem::path& policy_head_path)
         : env_(ORT_LOGGING_LEVEL_WARNING, "navigation_onnx") {
         options_.SetGraphOptimizationLevel(ORT_ENABLE_EXTENDED);
-        session_ = std::make_unique<Ort::Session>(
-            env_, model_path.c_str(), options_);
-        if (session_->GetInputCount() != 1 || session_->GetOutputCount() != 1) {
-            throw std::runtime_error("navigation ONNX must have one input and one output");
+        encoder_ = std::make_unique<Ort::Session>(
+            env_, encoder_path.c_str(), options_);
+        policy_head_ = std::make_unique<Ort::Session>(
+            env_, policy_head_path.c_str(), options_);
+
+        if (encoder_->GetInputCount() != 1 || encoder_->GetOutputCount() != 1) {
+            throw std::runtime_error(
+                "GAT encoder ONNX must have one input and one output");
         }
-        input_name_ = session_->GetInputNameAllocated(0, allocator_).get();
-        output_name_ = session_->GetOutputNameAllocated(0, allocator_).get();
-        const auto input_shape = session_->GetInputTypeInfo(0)
+        encoder_input_name_ = encoder_->GetInputNameAllocated(0, allocator_).get();
+        encoder_output_name_ = encoder_->GetOutputNameAllocated(0, allocator_).get();
+        const auto encoder_input_shape = encoder_->GetInputTypeInfo(0)
             .GetTensorTypeAndShapeInfo().GetShape();
-        const auto output_shape = session_->GetOutputTypeInfo(0)
+        const auto encoder_output_shape = encoder_->GetOutputTypeInfo(0)
             .GetTensorTypeAndShapeInfo().GetShape();
-        if (input_shape.empty() || input_shape.back() != 121 ||
-            output_shape.empty() || output_shape.back() != 3) {
-            throw std::runtime_error("navigation ONNX shape must be [batch,121] -> [batch,3]");
+        if (encoder_input_name_ != "nodes" ||
+            encoder_output_name_ != "robot_embedding" ||
+            encoder_input_shape.size() != 3 || encoder_input_shape.back() != 8 ||
+            encoder_output_shape.size() != 2 || encoder_output_shape.back() != 16) {
+            throw std::runtime_error(
+                "GAT encoder ONNX must be nodes[batch,N,8] -> "
+                "robot_embedding[batch,16]");
+        }
+
+        if (policy_head_->GetInputCount() != 2 ||
+            policy_head_->GetOutputCount() != 1) {
+            throw std::runtime_error(
+                "navigation policy-head ONNX must have two inputs and one output");
+        }
+        head_embedding_input_name_ =
+            policy_head_->GetInputNameAllocated(0, allocator_).get();
+        head_local_input_name_ =
+            policy_head_->GetInputNameAllocated(1, allocator_).get();
+        head_output_name_ =
+            policy_head_->GetOutputNameAllocated(0, allocator_).get();
+        const auto embedding_shape = policy_head_->GetInputTypeInfo(0)
+            .GetTensorTypeAndShapeInfo().GetShape();
+        const auto local_shape = policy_head_->GetInputTypeInfo(1)
+            .GetTensorTypeAndShapeInfo().GetShape();
+        const auto action_shape = policy_head_->GetOutputTypeInfo(0)
+            .GetTensorTypeAndShapeInfo().GetShape();
+        if (head_embedding_input_name_ != "robot_embedding" ||
+            head_local_input_name_ != "local_state" ||
+            head_output_name_ != "policy_action" ||
+            embedding_shape.size() != 2 || embedding_shape.back() != 16 ||
+            local_shape.size() != 2 || local_shape.back() != 13 ||
+            action_shape.size() != 2 || action_shape.back() != 3) {
+            throw std::runtime_error(
+                "navigation policy-head ONNX must be "
+                "robot_embedding[batch,16] + local_state[batch,13] -> "
+                "policy_action[batch,3]");
         }
     }
 
-    std::array<float, 3> Act(const std::vector<float>& observation) {
-        if (observation.size() != 121 || !AllFinite(observation)) {
-            throw std::runtime_error("invalid 121D navigation observation");
+    std::array<float, 3> Act(const std::vector<float>& nodes,
+                             const std::vector<float>& local_state) {
+        constexpr std::size_t kNodeDimension = 8;
+        constexpr std::size_t kMaximumNodes = 12;
+        if (nodes.size() % kNodeDimension != 0 || !AllFinite(nodes)) {
+            throw std::runtime_error("invalid dynamic GAT node observation");
         }
+        const std::size_t node_count = nodes.size() / kNodeDimension;
+        if (node_count < 2 || node_count > kMaximumNodes) {
+            throw std::runtime_error("GAT node count must be in [2,12]");
+        }
+        if (local_state.size() != 13 || !AllFinite(local_state)) {
+            throw std::runtime_error("invalid 13D navigation local state");
+        }
+
         auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        const std::array<int64_t, 2> shape{1, 121};
-        auto input = Ort::Value::CreateTensor<float>(
-            memory, const_cast<float*>(observation.data()), observation.size(),
-            shape.data(), shape.size());
-        const char* input_names[] = {input_name_.c_str()};
-        const char* output_names[] = {output_name_.c_str()};
-        auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names, &input,
-                                     1, output_names, 1);
-        const auto info = outputs.front().GetTensorTypeAndShapeInfo();
-        if (info.GetElementCount() != 3) {
-            throw std::runtime_error("navigation ONNX returned a non-3D action");
+        const std::array<int64_t, 3> node_shape{
+            1, static_cast<int64_t>(node_count),
+            static_cast<int64_t>(kNodeDimension)};
+        auto node_tensor = Ort::Value::CreateTensor<float>(
+            memory, const_cast<float*>(nodes.data()), nodes.size(),
+            node_shape.data(), node_shape.size());
+        const char* encoder_input_names[] = {encoder_input_name_.c_str()};
+        const char* encoder_output_names[] = {encoder_output_name_.c_str()};
+        auto encoder_outputs = encoder_->Run(
+            Ort::RunOptions{nullptr}, encoder_input_names, &node_tensor, 1,
+            encoder_output_names, 1);
+        if (encoder_outputs.size() != 1 ||
+            encoder_outputs.front().GetTensorTypeAndShapeInfo().GetElementCount() != 16) {
+            throw std::runtime_error("GAT encoder returned a non-16D embedding");
+        }
+
+        const float* embedding = encoder_outputs.front().GetTensorData<float>();
+        for (std::size_t i = 0; i < 16; ++i) {
+            if (!std::isfinite(embedding[i])) {
+                throw std::runtime_error("GAT encoder returned NaN/Inf");
+            }
+        }
+
+        const std::array<int64_t, 2> local_shape{1, 13};
+        auto local_tensor = Ort::Value::CreateTensor<float>(
+            memory, const_cast<float*>(local_state.data()), local_state.size(),
+            local_shape.data(), local_shape.size());
+        std::array<Ort::Value, 2> head_inputs{
+            std::move(encoder_outputs.front()), std::move(local_tensor)};
+        const char* head_input_names[] = {
+            head_embedding_input_name_.c_str(), head_local_input_name_.c_str()};
+        const char* head_output_names[] = {head_output_name_.c_str()};
+        auto outputs = policy_head_->Run(
+            Ort::RunOptions{nullptr}, head_input_names, head_inputs.data(),
+            head_inputs.size(), head_output_names, 1);
+        if (outputs.size() != 1 ||
+            outputs.front().GetTensorTypeAndShapeInfo().GetElementCount() != 3) {
+            throw std::runtime_error(
+                "navigation policy head returned a non-3D action");
         }
         const float* value = outputs.front().GetTensorData<float>();
         std::array<float, 3> action{value[0], value[1], value[2]};
         for (float item : action) {
             if (!std::isfinite(item)) {
-                throw std::runtime_error("navigation ONNX returned NaN/Inf");
+                throw std::runtime_error(
+                    "navigation policy head returned NaN/Inf");
             }
         }
         return action;
@@ -136,8 +214,11 @@ private:
     Ort::Env env_;
     Ort::SessionOptions options_;
     Ort::AllocatorWithDefaultOptions allocator_;
-    std::unique_ptr<Ort::Session> session_;
-    std::string input_name_, output_name_;
+    std::unique_ptr<Ort::Session> encoder_;
+    std::unique_ptr<Ort::Session> policy_head_;
+    std::string encoder_input_name_, encoder_output_name_;
+    std::string head_embedding_input_name_, head_local_input_name_;
+    std::string head_output_name_;
 };
 
 State_Navigation::State_Navigation(int state_mode, std::string state_string)
@@ -151,6 +232,10 @@ State_Navigation::State_Navigation(int state_mode, std::string state_string)
     const auto dpcbf_path = repo_root / "dpcbf/config/dpcbf_config.yaml";
     const auto dpcbf_cfg = YAML::LoadFile(dpcbf_path.string());
     boundary_params_ = dpcbf_ros_adapter::LoadBoundaryParams(dpcbf_path);
+    if (boundary_params_.max_constraints > 10) {
+        throw std::runtime_error(
+            "Navigation supports at most 10 prioritized obstacle nodes");
+    }
 
     high_level_dt_ = nav_cfg["high_level_dt"].as<double>(0.1);
     goal_radius_ = nav_cfg["goal_radius"].as<double>(0.3);
@@ -158,6 +243,12 @@ State_Navigation::State_Navigation(int state_mode, std::string state_string)
         .as<double>(10.0) * kPi / 180.0;
     enable_random_goal_ = nav_cfg["enable_random_goal"].as<bool>(false) &&
                           param::is_simulation;
+    hold_goal_after_reaching_ =
+        nav_cfg["hold_goal_after_reaching"].as<bool>(true);
+    goal_hold_obstacle_trigger_distance_ =
+        nav_cfg["goal_hold_obstacle_trigger_distance"].as<double>(1.0);
+    goal_hold_min_closing_speed_ =
+        nav_cfg["goal_hold_min_closing_speed"].as<double>(0.05);
     random_goal_margin_ = nav_cfg["random_goal_margin"].as<double>(0.6);
     random_engine_.seed(nav_cfg["random_seed"].as<unsigned int>(42));
     const auto safety = nav_cfg["safety"];
@@ -210,6 +301,8 @@ State_Navigation::State_Navigation(int state_mode, std::string state_string)
         viz["goal_sphere_center_height"].as<double>(0.60);
     goal_sphere_radius_ = viz["goal_sphere_radius"].as<double>(0.05);
     if (!(goal_heading_tolerance_ >= 0.0 && goal_heading_tolerance_ <= kPi) ||
+        goal_hold_obstacle_trigger_distance_ < 0.0 ||
+        goal_hold_min_closing_speed_ < 0.0 ||
         pulse_period_ <= 0.0 || pulse_min_ <= 0.0 || pulse_max_ < pulse_min_ ||
         center_pulse_min_scale_ <= 0.0 ||
         center_pulse_max_scale_ < center_pulse_min_scale_ ||
@@ -229,9 +322,10 @@ State_Navigation::State_Navigation(int state_mode, std::string state_string)
         std::make_shared<unitree::BaseArticulation<LowState_t::SharedPtr>>(
             FSMState::lowstate));
     low_env_->alg = std::make_unique<isaaclab::OrtRunner>(
-        policy_dir / "exported/low_level_policy.onnx");
+        policy_dir / "exported/low_level_locomotion_policy.onnx");
     high_policy_ = std::make_unique<NavigationOrtRunner>(
-        policy_dir / "exported/navigation.onnx");
+        policy_dir / "exported/high_level_navigation_policy/gat_encoder.onnx",
+        policy_dir / "exported/high_level_navigation_policy/policy_head.onnx");
     joint_targets_.assign(29, 0.0f);
 
     node_ = std::make_shared<rclcpp::Node>("g1_navigation_controller");
@@ -454,57 +548,106 @@ void State_Navigation::CreateRandomGoal(const RobotSnapshot& robot) {
     goal_.active = false;
 }
 
-std::vector<float> State_Navigation::BuildObservation(
-    const RobotSnapshot& robot, const GoalSnapshot& goal,
+bool State_Navigation::HasApproachingGoalHoldThreat(
+    const RobotSnapshot& robot,
     const std::vector<dpcbf_ros_adapter::BoundaryObstacle>& selected) const {
-    std::vector<float> obs(121, 0.0f);
-    obs[0] = 1.0f;
-    obs[5] = static_cast<float>(boundary_params_.robot_radius);
-    obs[8] = 1.0f;
-    for (int i = 0; i < 10; ++i) {
-        const int base = 9 * (i + 1);
-        obs[base + 1] = 1.0f;
-        obs[base + 3] = 100.0f;
-        obs[base + 4] = 100.0f;
-        obs[base + 5] = 0.2f;
-    }
-    const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
-    for (std::size_t i = 0; i < std::min<std::size_t>(10, selected.size()); ++i) {
-        const auto& item = selected[i];
-        const int base = 9 * (static_cast<int>(i) + 1);
+    for (const auto& item : selected) {
         const double dx = item.obstacle.x - robot.x;
         const double dy = item.obstacle.y - robot.y;
-        obs[base + 3] = static_cast<float>(c * dx + s * dy);
-        obs[base + 4] = static_cast<float>(-s * dx + c * dy);
-        obs[base + 5] = static_cast<float>(item.obstacle.radius);
-        obs[base + 6] = static_cast<float>(c * item.relative_velocity_world[0] +
-                                           s * item.relative_velocity_world[1]);
-        obs[base + 7] = static_cast<float>(-s * item.relative_velocity_world[0] +
-                                           c * item.relative_velocity_world[1]);
-        obs[base + 8] = 1.0f;
+        const double center_distance = std::hypot(dx, dy);
+        if (center_distance <= 1.0e-9) {
+            continue;
+        }
+        const double surface_distance = center_distance -
+            (boundary_params_.robot_radius + item.obstacle.radius);
+        const double closing_speed =
+            -(dx * item.relative_velocity_world[0] +
+              dy * item.relative_velocity_world[1]) / center_distance;
+        if (surface_distance <= goal_hold_obstacle_trigger_distance_ &&
+            closing_speed >= goal_hold_min_closing_speed_) {
+            return true;
+        }
     }
+    return false;
+}
+
+std::vector<float> State_Navigation::BuildNodeObservation(
+    const RobotSnapshot& robot, const GoalSnapshot& goal,
+    const std::vector<dpcbf_ros_adapter::BoundaryObstacle>& selected) const {
+    constexpr std::size_t kMaximumObstacles = 10;
+    constexpr std::size_t kNodeDimension = 8;
+    const std::size_t obstacle_count =
+        std::min(selected.size(), kMaximumObstacles);
+    std::vector<float> nodes;
+    nodes.reserve((2 + obstacle_count) * kNodeDimension);
+    const auto append_node = [&nodes](float is_robot, float is_obstacle,
+                                      float is_goal, float x, float y,
+                                      float radius, float vx, float vy) {
+        nodes.insert(nodes.end(), {is_robot, is_obstacle, is_goal,
+                                   x, y, radius, vx, vy});
+    };
+
+    // The encoder returns only the first node's latent, so robot must remain
+    // node 0. All coordinates and velocities are robot-relative in body frame.
+    append_node(1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                static_cast<float>(boundary_params_.robot_radius),
+                0.0f, 0.0f);
+
+    const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
+    const double robot_vx_b = c * robot.vx_world + s * robot.vy_world;
+    const double robot_vy_b = -s * robot.vx_world + c * robot.vy_world;
+    const double goal_dx = goal.x - robot.x;
+    const double goal_dy = goal.y - robot.y;
+    const double goal_bx = c * goal_dx + s * goal_dy;
+    const double goal_by = -s * goal_dx + c * goal_dy;
+
+    // Goal is node 1. It is stationary in the world, hence relative velocity
+    // is the negative robot body velocity.
+    append_node(0.0f, 0.0f, 1.0f,
+                static_cast<float>(goal_bx),
+                static_cast<float>(goal_by),
+                static_cast<float>(goal_radius_),
+                static_cast<float>(-robot_vx_b),
+                static_cast<float>(-robot_vy_b));
+
+    // No dummy nodes and no valid mask: append only the prioritized obstacles
+    // actually received from perception. Their radius is circle.radius from
+    // /obstacles_safe; the GAT computes pairwise surface distance internally.
+    for (std::size_t i = 0; i < obstacle_count; ++i) {
+        const auto& item = selected[i];
+        const double dx = item.obstacle.x - robot.x;
+        const double dy = item.obstacle.y - robot.y;
+        append_node(
+            0.0f, 1.0f, 0.0f,
+            static_cast<float>(c * dx + s * dy),
+            static_cast<float>(-s * dx + c * dy),
+            static_cast<float>(item.obstacle.radius),
+            static_cast<float>(c * item.relative_velocity_world[0] +
+                               s * item.relative_velocity_world[1]),
+            static_cast<float>(-s * item.relative_velocity_world[0] +
+                               c * item.relative_velocity_world[1]));
+    }
+    return nodes;
+}
+
+std::vector<float> State_Navigation::BuildLocalState(
+    const RobotSnapshot& robot, const GoalSnapshot& goal) const {
+    std::vector<float> local_state(13, 0.0f);
+    const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
     const double goal_dx = goal.x - robot.x;
     const double goal_dy = goal.y - robot.y;
     const double goal_bx = c * goal_dx + s * goal_dy;
     const double goal_by = -s * goal_dx + c * goal_dy;
     const double robot_vx_b = c * robot.vx_world + s * robot.vy_world;
     const double robot_vy_b = -s * robot.vx_world + c * robot.vy_world;
-    constexpr int goal_base = 99;
-    obs[goal_base + 2] = 1.0f;
-    obs[goal_base + 3] = static_cast<float>(goal_bx);
-    obs[goal_base + 4] = static_cast<float>(goal_by);
-    obs[goal_base + 5] = static_cast<float>(goal_radius_);
-    obs[goal_base + 6] = static_cast<float>(-robot_vx_b);
-    obs[goal_base + 7] = static_cast<float>(-robot_vy_b);
-    obs[goal_base + 8] = 1.0f;
     const double heading_error = WrapAngle(goal.yaw - robot.yaw);
-    obs[108] = static_cast<float>(goal_bx);
-    obs[109] = static_cast<float>(goal_by);
-    obs[110] = static_cast<float>(std::sin(heading_error));
-    obs[111] = static_cast<float>(std::cos(heading_error));
-    obs[112] = static_cast<float>(robot_vx_b);
-    obs[113] = static_cast<float>(robot_vy_b);
-    obs[114] = static_cast<float>(robot.yaw_rate);
+    local_state[0] = static_cast<float>(goal_bx);
+    local_state[1] = static_cast<float>(goal_by);
+    local_state[2] = static_cast<float>(std::sin(heading_error));
+    local_state[3] = static_cast<float>(std::cos(heading_error));
+    local_state[4] = static_cast<float>(robot_vx_b);
+    local_state[5] = static_cast<float>(robot_vy_b);
+    local_state[6] = static_cast<float>(robot.yaw_rate);
     std::array<float, 3> command;
     std::array<float, 3> previous_action;
     {
@@ -513,10 +656,10 @@ std::vector<float> State_Navigation::BuildObservation(
         previous_action = previous_normalized_action_;
     }
     for (int i = 0; i < 3; ++i) {
-        obs[115 + i] = command[i];
-        obs[118 + i] = previous_action[i];
+        local_state[7 + i] = command[i];
+        local_state[10 + i] = previous_action[i];
     }
-    return obs;
+    return local_state;
 }
 
 bool State_Navigation::UpdateHighLevel() {
@@ -574,26 +717,6 @@ bool State_Navigation::UpdateHighLevel() {
         SetZeroCommand();
         return false;
     }
-    const double goal_distance = std::hypot(goal.x - robot.x, goal.y - robot.y);
-    const double goal_heading_error = std::abs(WrapAngle(goal.yaw - robot.yaw));
-    if (goal_distance <= goal_radius_ &&
-        goal_heading_error <= goal_heading_tolerance_) {
-        std::lock_guard<std::mutex> lock(data_mutex_);
-        velocity_command_ = {0.0f, 0.0f, 0.0f};
-        previous_normalized_action_ = {0.0f, 0.0f, 0.0f};
-        if (enable_random_goal_) CreateRandomGoal(robot);
-        else goal_.active = false;
-        low_env_->set_external_velocity_command(velocity_command_);
-        return false;
-    }
-    if (goal_distance <= goal_radius_) {
-        RCLCPP_INFO_THROTTLE(
-            node_->get_logger(), *node_->get_clock(), 1000,
-            "Goal position reached; aligning heading (error %.1f deg, tolerance %.1f deg)",
-            goal_heading_error * 180.0 / kPi,
-            goal_heading_tolerance_ * 180.0 / kPi);
-    }
-
     dpcbf::RobotState dpcbf_robot;
     dpcbf_robot.x = robot.x; dpcbf_robot.y = robot.y; dpcbf_robot.phi = robot.yaw;
     const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
@@ -601,6 +724,46 @@ bool State_Navigation::UpdateHighLevel() {
     dpcbf_robot.lateral_velocity = -s * robot.vx_world + c * robot.vy_world;
     const auto selected = dpcbf_ros_adapter::SelectAndEvaluate(
         boundary_params_, dpcbf_robot, obstacles);
+
+    const double goal_distance = std::hypot(goal.x - robot.x, goal.y - robot.y);
+    const double goal_heading_error = std::abs(WrapAngle(goal.yaw - robot.yaw));
+    if (goal_distance <= goal_radius_ &&
+        goal_heading_error <= goal_heading_tolerance_) {
+        if (enable_random_goal_) {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            velocity_command_ = {0.0f, 0.0f, 0.0f};
+            previous_normalized_action_ = {0.0f, 0.0f, 0.0f};
+            CreateRandomGoal(robot);
+            low_env_->set_external_velocity_command(velocity_command_);
+            return false;
+        }
+
+        const bool approaching_threat = hold_goal_after_reaching_ &&
+            HasApproachingGoalHoldThreat(robot, selected);
+        if (!approaching_threat) {
+            {
+                std::lock_guard<std::mutex> lock(data_mutex_);
+                velocity_command_ = {0.0f, 0.0f, 0.0f};
+                previous_normalized_action_ = {0.0f, 0.0f, 0.0f};
+                if (!hold_goal_after_reaching_) {
+                    goal_.active = false;
+                }
+                low_env_->set_external_velocity_command(velocity_command_);
+            }
+            PublishMarkers(robot, goal, selected);
+            return false;
+        }
+        RCLCPP_INFO_THROTTLE(
+            node_->get_logger(), *node_->get_clock(), 1000,
+            "Goal hold avoidance active: an obstacle is approaching");
+    } else if (goal_distance <= goal_radius_) {
+        RCLCPP_INFO_THROTTLE(
+            node_->get_logger(), *node_->get_clock(), 1000,
+            "Goal position reached; aligning heading (error %.1f deg, tolerance %.1f deg)",
+            goal_heading_error * 180.0 / kPi,
+            goal_heading_tolerance_ * 180.0 / kPi);
+    }
+
     if (collision_stop_enabled_) {
         for (const auto& obstacle : obstacles) {
             const double clearance =
@@ -618,8 +781,9 @@ bool State_Navigation::UpdateHighLevel() {
         }
     }
     try {
-        const auto observation = BuildObservation(robot, goal, selected);
-        auto action = high_policy_->Act(observation);
+        const auto nodes = BuildNodeObservation(robot, goal, selected);
+        const auto local_state = BuildLocalState(robot, goal);
+        auto action = high_policy_->Act(nodes, local_state);
         action[0] = std::clamp(action[0], -2.0f, 4.0f);
         action[1] = std::clamp(action[1], -2.0f, 2.0f);
         action[2] = std::clamp(action[2], -1.0f, 1.0f);

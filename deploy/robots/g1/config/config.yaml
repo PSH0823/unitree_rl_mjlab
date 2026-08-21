@@ -98,11 +98,9 @@ FSM:
   Navigation:
     transitions:
       CustomVelocity: RT + X.on_pressed
-      Passive: LT + B.on_pressed
 
     policy_dir: config/policy/navigation/v1
 
 console_fsm_control:
   enabled: true
   simulation_only: true
-  require_configured_transition: true
