@@ -100,6 +100,10 @@ private:
     bool obstacles_received_once_ = false;
     std::array<float, 3> velocity_command_{0.0f, 0.0f, 0.0f};
     std::array<float, 3> previous_normalized_action_{0.0f, 0.0f, 0.0f};
+    std::array<std::array<float, 2>, 3> action_range_{
+        {{-2.0f, 4.0f}, {-2.0f, 2.0f}, {-1.0f, 1.0f}}};
+    std::array<std::array<float, 2>, 3> velocity_command_range_{
+        {{-1.0f, 2.0f}, {-1.0f, 1.0f}, {-1.0f, 1.0f}}};
     SteadyClock::time_point last_high_success_{};
 
     dpcbf_ros_adapter::BoundaryParams boundary_params_;

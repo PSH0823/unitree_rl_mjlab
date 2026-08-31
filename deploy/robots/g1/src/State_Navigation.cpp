@@ -62,6 +62,23 @@ std_msgs::msg::ColorRGBA Color(const std::array<float, 4>& values) {
     return out;
 }
 
+std::array<float, 2> ConfigRange(
+    const YAML::Node& node, const char* key,
+    const std::array<float, 2>& fallback) {
+    if (!node || !node[key]) return fallback;
+    if (!node[key].IsSequence() || node[key].size() != 2) {
+        throw std::runtime_error(
+            std::string("range '") + key + "' must be a [min, max] pair");
+    }
+    std::array<float, 2> value{node[key][0].as<float>(),
+                               node[key][1].as<float>()};
+    if (!(value[0] < value[1])) {
+        throw std::runtime_error(
+            std::string("range '") + key + "' must satisfy min < max");
+    }
+    return value;
+}
+
 std::array<float, 4> ConfigColor(
     const YAML::Node& node, const char* key,
     const std::array<float, 4>& fallback) {
@@ -265,6 +282,11 @@ State_Navigation::State_Navigation(int state_mode, std::string state_string)
     invalid_low_level_output_limit_ =
         safety["invalid_low_level_output_limit"].as<int>(3);
 
+    const auto action_cfg = nav_cfg["actions"]["base_command"];
+    action_range_[0] = ConfigRange(action_cfg, "lin_acc_x", action_range_[0]);
+    action_range_[1] = ConfigRange(action_cfg, "lin_acc_y", action_range_[1]);
+    action_range_[2] = ConfigRange(action_cfg, "ang_vel_z", action_range_[2]);
+
     const auto arena = dpcbf_cfg["dynamic_obstacles"]["arena"];
     if (arena["size"] && arena["size"].size() == 2) {
         arena_width_ = arena["size"][0].as<double>();
@@ -326,6 +348,14 @@ State_Navigation::State_Navigation(int state_mode, std::string state_string)
     high_policy_ = std::make_unique<NavigationOrtRunner>(
         policy_dir / "exported/high_level_navigation_policy/gat_encoder.onnx",
         policy_dir / "exported/high_level_navigation_policy/policy_head.onnx");
+    const auto command_ranges =
+        low_env_->cfg["commands"]["base_velocity"]["ranges"];
+    velocity_command_range_[0] = ConfigRange(
+        command_ranges, "lin_vel_x", velocity_command_range_[0]);
+    velocity_command_range_[1] = ConfigRange(
+        command_ranges, "lin_vel_y", velocity_command_range_[1]);
+    velocity_command_range_[2] = ConfigRange(
+        command_ranges, "ang_vel_z", velocity_command_range_[2]);
     joint_targets_.assign(29, 0.0f);
 
     node_ = std::make_shared<rclcpp::Node>("g1_navigation_controller");
@@ -784,21 +814,29 @@ bool State_Navigation::UpdateHighLevel() {
         const auto nodes = BuildNodeObservation(robot, goal, selected);
         const auto local_state = BuildLocalState(robot, goal);
         auto action = high_policy_->Act(nodes, local_state);
-        action[0] = std::clamp(action[0], -2.0f, 4.0f);
-        action[1] = std::clamp(action[1], -2.0f, 2.0f);
-        action[2] = std::clamp(action[2], -1.0f, 1.0f);
+        for (int i = 0; i < 3; ++i) {
+            action[i] = std::clamp(
+                action[i], action_range_[i][0], action_range_[i][1]);
+        }
         {
             std::lock_guard<std::mutex> lock(data_mutex_);
             velocity_command_[0] = std::clamp(
                 velocity_command_[0] + action[0] * static_cast<float>(high_level_dt_),
-                -1.0f, 2.0f);
+                velocity_command_range_[0][0], velocity_command_range_[0][1]);
             velocity_command_[1] = std::clamp(
                 velocity_command_[1] + action[1] * static_cast<float>(high_level_dt_),
-                -1.0f, 1.0f);
-            velocity_command_[2] = action[2];
-            previous_normalized_action_[0] = std::clamp((action[0] - 1.0f) / 3.0f, -1.0f, 1.0f);
-            previous_normalized_action_[1] = std::clamp(action[1] / 2.0f, -1.0f, 1.0f);
-            previous_normalized_action_[2] = action[2];
+                velocity_command_range_[1][0], velocity_command_range_[1][1]);
+            velocity_command_[2] = std::clamp(
+                action[2],
+                velocity_command_range_[2][0], velocity_command_range_[2][1]);
+            for (int i = 0; i < 3; ++i) {
+                const float center =
+                    0.5f * (action_range_[i][0] + action_range_[i][1]);
+                const float half_range =
+                    0.5f * (action_range_[i][1] - action_range_[i][0]);
+                previous_normalized_action_[i] = std::clamp(
+                    (action[i] - center) / half_range, -1.0f, 1.0f);
+            }
             low_env_->set_external_velocity_command(velocity_command_);
             last_high_success_ = SteadyClock::now();
             RCLCPP_INFO_THROTTLE(

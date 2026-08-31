@@ -19,6 +19,17 @@ goal_hold_min_closing_speed: 0.05
 random_goal_margin: 0.6
 random_seed: 42
 
+# High-level action ranges [min, max]; must match the training config. The
+# raw policy output is clipped to these, and the previous-action observation
+# is normalized to [-1, 1] around each range's center. The integrated
+# velocity command is clamped by commands.base_velocity.ranges in
+# low_level_deploy.yaml.
+actions:
+  base_command:
+    lin_acc_x: [-2.0, 4.0]
+    lin_acc_y: [-2.0, 2.0]
+    ang_vel_z: [-1.0, 1.0]
+
 topics:
   odometry: /odom
   obstacles: /obstacles_safe

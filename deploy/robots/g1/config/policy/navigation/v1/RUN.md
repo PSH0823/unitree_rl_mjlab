@@ -3,6 +3,27 @@
 Every ROS terminal must use the same `ROS_DOMAIN_ID` and
 `RMW_IMPLEMENTATION`.  The field setup uses `source ~/.g1_net_env`.
 
+## Build
+
+`g1_ctrl` links against the ROS 2 perception messages, so build the
+`ros2/` workspace first, then configure and build the controller:
+
+```bash
+cd ~/unitree_rl_mjlab
+source /opt/ros/$ROS_DISTRO/setup.bash
+source ros2/install/setup.bash
+cmake -S deploy/robots/g1 -B deploy/robots/g1/build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="$PWD/ros2/install"
+cmake --build deploy/robots/g1/build -j"$(nproc)"
+```
+
+Rebuild after changing any C++ source.  The YAML files under
+`config/policy/navigation/v1/params/` are read at start-up, so changing
+them (for example the `actions.base_command` ranges in `navigation.yaml`
+or `commands.base_velocity.ranges` in `low_level_deploy.yaml`) only
+requires restarting `g1_ctrl`, not rebuilding.
+
 ## Simulation
 
 In every simulation terminal, first select the same loopback DDS config:

@@ -1,0 +1,38 @@
+# 3D detection front-end (cloud_object_detector). Input is
+# /points_self_filtered (CropBox output, sensor frame); output DetectedObjects
+# in world_frame. The z band replaces the 2D path's pointcloud_to_laserscan
+# min/max_height floor rejection and assumes world-frame z=0 at the floor
+# (sim GT odom and DLIO initial pose; revisit on hardware if odom z drifts).
+cloud_object_detector:
+  ros__parameters:
+    world_frame: odom
+    tf_timeout: 0.1          # [s] stamped lookup, same policy as the extractor
+    max_range: 5.0           # [m] horizontal, from the sensor — matches /scan range_max
+    z_min: 0.10              # [m] floor cut; 2D band was [-0.25, 0.55] in mid360_link
+    z_max: 2.0               # [m] overhead cut (doorway lintels etc.)
+    voxel_leaf: 0.05         # [m] 0.0 disables; same leaf as the §9.3 option
+    cluster_tolerance: 0.30  # [m] Euclidean clustering gap
+    min_cluster_size: 5      # [points]
+    max_cluster_size: 20000  # [points]
+    min_object_height: 0.05  # [m] thinner clusters dropped as debris
+    max_hull_vertices: 16    # footprint cap, bounds tracker IoU cost
+    # Wall gate: drop long-and-thin footprints (room structure) and anything
+    # over the absolute extent cap. A person is <= ~0.6 m across; two abreast
+    # merge to ~1 m but are >= ~0.4 m thick, so they survive both rules.
+    # 0 disables a rule. Counted + logged when it fires (INFO, 10 s throttle).
+    wall_min_length: 1.0     # [m] long...
+    wall_max_thickness: 0.35 # [m] ...AND thin -> wall
+    max_object_extent: 3.0   # [m] absolute cap (catches L-shaped corners)
+    # Depth completion: the lidar sees only the sensor-facing surface, so a
+    # solid object hulls into a near-zero-thickness arc. Footprints thinner
+    # than this are padded to it in two stages — first AWAY from the sensor
+    # (the occluded volume), then, if still thin because the cluster lies
+    # along the ray (an edge, a fragment seen end-on), symmetrically along
+    # its own thin axis — and the pose moves to the padded polygon's area
+    # centroid. The 3D hull (detected_convex) is built from the same padded
+    # points. 0 disables. Applied after the wall gate.
+    min_thickness: 0.25      # [m]
+    position_stddev: 0.03    # [m] published position covariance — REQUIRED:
+                             # without it the tracker substitutes the UNKNOWN
+                             # default (1.0 m)^2 and its uncertainty gate
+                             # zeroes every published twist below ~1 m/s
