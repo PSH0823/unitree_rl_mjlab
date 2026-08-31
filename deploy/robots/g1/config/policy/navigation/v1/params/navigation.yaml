@@ -6,7 +6,7 @@ goal_heading_tolerance_deg: 10.0
 # goal is fully reached (position + heading), this option generates the next
 # goal automatically. Random goals are additionally gated by --network=lo and
 # can never be generated on hardware by changing this file accidentally.
-enable_random_goal: true
+enable_random_goal: false
 
 # When random goals are disabled, preserve a fully reached goal. The robot
 # normally commands zero, but resumes Navigation if a selected obstacle is
