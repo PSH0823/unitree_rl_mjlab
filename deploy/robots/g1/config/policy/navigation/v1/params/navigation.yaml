@@ -36,6 +36,10 @@ topics:
   goal: /navigation/goal
   stop: /navigation/stop
   markers: /navigation/markers
+  # Final low-level velocity command (TwistStamped, robot heading frame):
+  # linear.x/y = sagittal/lateral velocity, angular.z = yaw rate. Published
+  # every time the command handed to the low-level policy changes.
+  command: /navigation/cmd_vel
 
 frames:
   world: odom

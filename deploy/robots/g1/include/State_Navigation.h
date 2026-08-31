@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <obstacle_detector/msg/obstacles.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -55,6 +56,7 @@ private:
     void PolicyLoop();
     bool UpdateHighLevel();
     void SetZeroCommand();
+    void PublishCommand(const std::array<float, 3>& command);
     void CreateRandomGoal(const RobotSnapshot& robot);
     bool HasApproachingGoalHoldThreat(
         const RobotSnapshot& robot,
@@ -91,6 +93,7 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_sub_;
     rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr stop_sub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr command_pub_;
 
     mutable std::mutex data_mutex_;
     RobotSnapshot robot_;

@@ -381,6 +381,9 @@ State_Navigation::State_Navigation(int state_mode, std::string state_string)
         [this](std_msgs::msg::Empty::ConstSharedPtr msg) { OnStop(*msg); });
     marker_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
         topics["markers"].as<std::string>(), rclcpp::QoS(1).best_effort());
+    command_pub_ = node_->create_publisher<geometry_msgs::msg::TwistStamped>(
+        topics["command"].as<std::string>("/navigation/cmd_vel"),
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
     executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>();
     executor_->add_node(node_);
     ros_thread_ = std::thread([this] { executor_->spin(); });
@@ -430,6 +433,7 @@ void State_Navigation::enter() {
         previous_normalized_action_ = {0.0f, 0.0f, 0.0f};
     }
     low_env_->set_external_velocity_command({0.0f, 0.0f, 0.0f});
+    PublishCommand({0.0f, 0.0f, 0.0f});
     low_env_->reset();
     accept_goal_commands_.store(true);
     policy_thread_running_.store(true);
@@ -545,6 +549,21 @@ void State_Navigation::SetZeroCommand() {
     std::lock_guard<std::mutex> lock(data_mutex_);
     velocity_command_ = {0.0f, 0.0f, 0.0f};
     low_env_->set_external_velocity_command(velocity_command_);
+    PublishCommand(velocity_command_);
+}
+
+// The command is expressed in the robot heading frame: linear.x/y are the
+// sagittal/lateral velocities fed to the low-level policy, angular.z the
+// yaw rate.
+void State_Navigation::PublishCommand(const std::array<float, 3>& command) {
+    if (!command_pub_) return;
+    geometry_msgs::msg::TwistStamped msg;
+    msg.header.stamp = node_->now();
+    msg.header.frame_id = "base_link";
+    msg.twist.linear.x = command[0];
+    msg.twist.linear.y = command[1];
+    msg.twist.angular.z = command[2];
+    command_pub_->publish(msg);
 }
 
 void State_Navigation::CreateRandomGoal(const RobotSnapshot& robot) {
@@ -765,6 +784,7 @@ bool State_Navigation::UpdateHighLevel() {
             previous_normalized_action_ = {0.0f, 0.0f, 0.0f};
             CreateRandomGoal(robot);
             low_env_->set_external_velocity_command(velocity_command_);
+            PublishCommand(velocity_command_);
             return false;
         }
 
@@ -779,6 +799,7 @@ bool State_Navigation::UpdateHighLevel() {
                     goal_.active = false;
                 }
                 low_env_->set_external_velocity_command(velocity_command_);
+                PublishCommand(velocity_command_);
             }
             PublishMarkers(robot, goal, selected);
             return false;
@@ -838,6 +859,7 @@ bool State_Navigation::UpdateHighLevel() {
                     (action[i] - center) / half_range, -1.0f, 1.0f);
             }
             low_env_->set_external_velocity_command(velocity_command_);
+            PublishCommand(velocity_command_);
             last_high_success_ = SteadyClock::now();
             RCLCPP_INFO_THROTTLE(
                 node_->get_logger(), *node_->get_clock(), 1000,
