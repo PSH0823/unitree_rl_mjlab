@@ -67,8 +67,8 @@ int main(int argc, char** argv)
     if (!std::getenv("ROS_DOMAIN_ID")) {
         setenv("ROS_DOMAIN_ID", "0", 0);
     }
-    rclcpp::init(
-        argc, argv, rclcpp::InitOptions(), rclcpp::SignalHandlerOptions::None);
+    rclcpp::init(argc, argv);
+    rclcpp::uninstall_signal_handlers();
     std::signal(SIGINT, request_shutdown);
     std::signal(SIGTERM, request_shutdown);
     auto ros_bootstrap_node =

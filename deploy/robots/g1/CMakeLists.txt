@@ -24,7 +24,6 @@ endif()
 
 include_directories(
   /usr/include/eigen3
-  /usr/local/include/ddscxx
   /usr/local/include/iceoryx/v2.0.2
   include
   ${ONNXRUNTIME_DIR}/include
