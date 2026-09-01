@@ -115,6 +115,7 @@ private:
     double high_level_dt_ = 0.1, goal_radius_ = 0.3;
     double goal_heading_tolerance_ = 0.17453292519943295;
     double obstacle_timeout_ = 0.5, odometry_timeout_ = 0.2;
+    double odom_velocity_filter_tau_ = 0.15;
     double command_timeout_ = 0.25;
     bool enable_random_goal_ = false;
     bool hold_goal_after_reaching_ = true;

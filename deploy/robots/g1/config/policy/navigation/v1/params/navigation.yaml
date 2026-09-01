@@ -19,6 +19,12 @@ goal_hold_min_closing_speed: 0.05
 random_goal_margin: 0.6
 random_seed: 42
 
+# Time constant tau [s] of the first-order low-pass applied to the robot
+# velocity differentiated from /odom poses (alpha = dt / (tau + dt), cutoff
+# = 1/(2*pi*tau) ~= 1.06 Hz at 0.15). Larger is smoother but lags more
+# during acceleration.
+odometry_velocity_filter_tau: 0.15
+
 # High-level action ranges [min, max]; must match the training config. The
 # raw policy output is clipped to these, and the previous-action observation
 # is normalized to [-1, 1] around each range's center. The integrated

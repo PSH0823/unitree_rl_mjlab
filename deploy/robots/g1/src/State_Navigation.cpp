@@ -267,6 +267,12 @@ State_Navigation::State_Navigation(int state_mode, std::string state_string)
     goal_hold_min_closing_speed_ =
         nav_cfg["goal_hold_min_closing_speed"].as<double>(0.05);
     random_goal_margin_ = nav_cfg["random_goal_margin"].as<double>(0.6);
+    odom_velocity_filter_tau_ =
+        nav_cfg["odometry_velocity_filter_tau"].as<double>(0.15);
+    if (odom_velocity_filter_tau_ <= 0.0) {
+        throw std::runtime_error(
+            "odometry_velocity_filter_tau must be positive");
+    }
     random_engine_.seed(nav_cfg["random_seed"].as<unsigned int>(42));
     const auto safety = nav_cfg["safety"];
     command_timeout_ = safety["command_timeout"].as<double>(0.25);
@@ -477,7 +483,8 @@ void State_Navigation::OnOdometry(const nav_msgs::msg::Odometry& msg) {
             const double raw_vx = (msg.pose.pose.position.x - robot_.x) / dt;
             const double raw_vy = (msg.pose.pose.position.y - robot_.y) / dt;
             const double raw_wz = WrapAngle(yaw - robot_.yaw) / dt;
-            const double alpha = std::clamp(dt / (0.15 + dt), 0.0, 1.0);
+            const double alpha =
+                std::clamp(dt / (odom_velocity_filter_tau_ + dt), 0.0, 1.0);
             vx = (1.0 - alpha) * robot_.vx_world + alpha * raw_vx;
             vy = (1.0 - alpha) * robot_.vy_world + alpha * raw_vy;
             wz = (1.0 - alpha) * robot_.yaw_rate + alpha * raw_wz;
