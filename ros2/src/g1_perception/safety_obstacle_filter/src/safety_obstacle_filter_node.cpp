@@ -19,6 +19,8 @@ class SafetyObstacleFilterNode : public rclcpp::Node {
         declare_parameter("max_circle_radius", params_.max_circle_radius);
     params_.fixed_inflation =
         declare_parameter("fixed_inflation", params_.fixed_inflation);
+    params_.radius_scale =
+        declare_parameter("radius_scale", params_.radius_scale);
     params_.latency_horizon =
         declare_parameter("latency_horizon", params_.latency_horizon);
     params_.v_max_obstacle =
@@ -45,10 +47,12 @@ class SafetyObstacleFilterNode : public rclcpp::Node {
         });
     RCLCPP_INFO(get_logger(),
                 "safety_obstacle_filter: max_age=%.2f min_r=%.2f max_r=%.2f "
-                "fixed=%.3f horizon=%.2f v_max=%.2f sigma=%s(k=%.3f cap=%.2f)",
+                "fixed=%.3f radius_scale=%.3f horizon=%.2f v_max=%.2f "
+                "sigma=%s(k=%.3f cap=%.2f)",
                 params_.max_age, params_.min_radius,
                 params_.max_circle_radius, params_.fixed_inflation,
-                params_.latency_horizon, params_.v_max_obstacle,
+                params_.radius_scale, params_.latency_horizon,
+                params_.v_max_obstacle,
                 params_.use_covariance ? "ON" : "off", params_.k_sigma,
                 params_.sigma_max);
   }

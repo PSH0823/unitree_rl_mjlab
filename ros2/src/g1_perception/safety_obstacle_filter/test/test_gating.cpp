@@ -73,6 +73,18 @@ TEST(Gating, SegmentsNotForwarded) {
   EXPECT_EQ(out.circles.size(), 1u);
 }
 
+TEST(Gating, RadiusScaleIsConfigurable) {
+  sof::Params p;
+  p.min_radius = 0.20;
+  p.fixed_inflation = 0.03;
+  p.latency_horizon = 0.10;
+  p.radius_scale = 0.50;
+  auto out = sof::Apply(Msg(0.0, {Circle(0, 0, 0.10, 1.0, 0.0)}), p, 0.0);
+  ASSERT_EQ(out.circles.size(), 1u);
+  // 0.5 * (min_radius 0.20 + fixed 0.03 + speed horizon 0.10)
+  EXPECT_NEAR(out.circles[0].radius, 0.165, 1e-12);
+}
+
 // --- Observability of the silent paths (gaps G1/G2) -------------------------
 
 TEST(Stats, LargeRadiusDropIsCounted) {

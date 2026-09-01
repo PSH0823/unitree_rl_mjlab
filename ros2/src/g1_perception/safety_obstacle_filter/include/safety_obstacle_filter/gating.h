@@ -10,8 +10,9 @@
 //   2. Speed sanity: clamp |v| to v_max_obstacle (direction preserved) —
 //      BEFORE inflation, so a KF spike can neither aim a constraint wrongly
 //      nor inflate a radius absurdly.
-//   3. Inflate: radius = r + fixed_inflation + k_sigma·sigma
-//                          + |v_clamped|·latency_horizon.
+//   3. Inflate and scale:
+//      radius = radius_scale · (r + fixed_inflation + k_sigma·sigma
+//                                  + |v_clamped|·latency_horizon).
 //
 // The k_sigma term (H-8, §9.6) is DEFAULT-DISABLED (use_covariance=false) and
 // config-gated: the shipped behaviour stays the Phase-4-calibrated fixed
@@ -36,6 +37,7 @@ struct Params {
   double min_radius = 0.20;         // m
   double max_circle_radius = 0.60;  // m
   double fixed_inflation = 0.03;    // m (Appendix A start; Phase-4 calibrated)
+  double radius_scale = 0.75;       // final published-radius multiplier
   double latency_horizon = 0.12;    // s
   double v_max_obstacle = 1.5;      // m/s
   // --- P-3 covariance inflation (§9.6 step 2's sigma term, H-8) ------------
@@ -127,8 +129,9 @@ inline obstacle_detector::msg::Obstacles Apply(
       }
       sigma_term = p.k_sigma * std::min(sigma, p.sigma_max);
     }
-    safe.radius = 0.75*(r + p.fixed_inflation + sigma_term +
-                  std::hypot(vx, vy) * p.latency_horizon);
+    safe.radius = p.radius_scale *
+                  (r + p.fixed_inflation + sigma_term +
+                   std::hypot(vx, vy) * p.latency_horizon);
     out.circles.push_back(safe);
   }
   return out;

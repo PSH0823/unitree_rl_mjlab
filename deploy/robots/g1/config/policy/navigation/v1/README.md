@@ -31,8 +31,17 @@ computes pairwise surface distances internally.
 Navigation always waits for the first external `/navigation/goal`. After that
 goal is reached in both position and heading, random follow-up goals are
 generated only when `enable_random_goal: true` and `g1_ctrl` runs with
+<<<<<<< Updated upstream
 `--network=lo`. Hardware never generates random goals. Otherwise,
 `hold_goal_after_reaching: true` preserves the reached goal: the command stays
 zero until a selected, sufficiently close obstacle approaches, then Navigation
 avoids it and returns to the preserved pose. A right-click Stop always clears
 the goal and keeps the command at zero.
+=======
+`--network=lo`. Hardware never generates random goals.
+
+Console number-key FSM transitions remain enabled in simulation. On hardware,
+set `console_fsm_control.simulation_only: false` in
+`deploy/robots/g1/config/config.yaml` to opt in. A number key is accepted only
+when its target is a configured transition from the current state.
+>>>>>>> Stashed changes

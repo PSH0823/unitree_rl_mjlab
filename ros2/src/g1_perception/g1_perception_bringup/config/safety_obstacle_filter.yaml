@@ -21,6 +21,10 @@ safety_obstacle_filter:
     # single number and splitting it across two files is how G2 happened.
     max_circle_radius: 0.60
     fixed_inflation: 0.051     # m (Phase-4 calibrated; was Appendix-A 0.03)
+    # Final multiplier applied after min-radius clamping and all inflation
+    # terms. Values below 1.0 make /obstacles_safe smaller and reduce the
+    # clearance presented to DPCBF. Restart the perception launch after edit.
+    radius_scale: 0.75
     latency_horizon: 0.12      # s
     v_max_obstacle: 1.5        # m/s
     # --- P-3 sigma term (wired, DEFAULT OFF) --------------------------------
