@@ -12,7 +12,7 @@ enable_random_goal: false
 # normally commands zero, but resumes Navigation if a selected obstacle is
 # approaching within this surface-to-surface distance, then returns to the
 # preserved position and heading. Right-click Stop still clears the goal.
-hold_goal_after_reaching: true
+hold_goal_after_reaching: false
 goal_hold_obstacle_trigger_distance: 1.2
 goal_hold_min_closing_speed: 0.05
 
@@ -54,16 +54,14 @@ frames:
 safety:
   command_timeout: 0.25
   obstacle_timeout: 0.5
-  odometry_timeout: 0.2
-  sensor_loss_behavior: zero_command
-  auto_exit_on_sensor_loss: false
+  odometry_timeout: 0.3
   collision_stop:
     enabled: false
     surface_distance: 0.15
   tilt_protection:
     enabled: true
     max_angle: 1.0
-    duration: 0.1
+    duration: 0.05
   invalid_low_level_output_limit: 3
 
 visualization:

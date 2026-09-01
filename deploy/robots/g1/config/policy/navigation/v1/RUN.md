@@ -141,9 +141,10 @@ field setup).  Run each command block below from the repository root
    goal. `enable_random_goal` is ignored on hardware even if it is true in the
    Navigation YAML.
 
-If `/odom`, TF or `/obstacles_safe` stops updating, Navigation stays selected
-and sends a zero velocity command. LowState loss, persistent bad tilt, or
-repeated low-level ONNX failure transitions to Passive.
+If `/odom`, TF or `/obstacles_safe` stops updating, Navigation stays selected,
+clears the active goal and sends a zero velocity command. Sensor recovery does
+not resume motion; the operator must send a new goal. LowState loss, persistent
+bad tilt, or repeated low-level ONNX failure transitions to Passive.
 
 Navigation intentionally has no direct operator transition to Passive. Exit
 with `RT + X` to CustomVelocity first, then use `LT + B` for Passive. Automatic

@@ -545,6 +545,10 @@ void State_Navigation::OnGoal(const geometry_msgs::msg::PoseStamped& msg) {
 }
 
 void State_Navigation::OnStop(const std_msgs::msg::Empty&) {
+    ClearGoalCommandState();
+}
+
+void State_Navigation::ClearGoalCommandState() {
     std::lock_guard<std::mutex> lock(data_mutex_);
     goal_.active = false;
     goal_.external = false;
@@ -738,32 +742,45 @@ bool State_Navigation::UpdateHighLevel() {
             FSMState::lowstate->msg_.imu_state().gyroscope()[2];
         if (std::isfinite(gyro_z)) robot.yaw_rate = gyro_z;
     }
+    const double odometry_age = AgeSeconds(robot.received);
+    const double obstacle_age = AgeSeconds(obstacle_stamp);
     if (!robot.valid) {
-        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
-                             "Navigation stopped: waiting for /odom");
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(), *node_->get_clock(), 2000,
+            "Navigation stopped and goal cleared: waiting for /odom");
+        ClearGoalCommandState();
         SetZeroCommand();
         return false;
     }
-    const double odometry_age = AgeSeconds(robot.received);
     if (odometry_age > odometry_timeout_) {
-        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
-                             "Navigation stopped: /odom stale (%.3f s > %.3f s)",
-                             odometry_age, odometry_timeout_);
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(), *node_->get_clock(), 2000,
+            "Navigation stopped and goal cleared: /odom stale "
+            "(%.3f s > %.3f s); a new goal is required",
+            odometry_age, odometry_timeout_);
+        ClearGoalCommandState();
         SetZeroCommand();
         return false;
     }
     if (!obstacles_seen) {
-        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
-                             "Navigation stopped: waiting for /obstacles_safe");
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(), *node_->get_clock(), 2000,
+            "Navigation stopped and goal cleared: waiting for "
+            "/obstacles_safe");
+        ClearGoalCommandState();
         SetZeroCommand();
         return false;
     }
-    const double obstacle_age = AgeSeconds(obstacle_stamp);
     if (obstacle_age > obstacle_timeout_) {
         RCLCPP_WARN_THROTTLE(
             node_->get_logger(), *node_->get_clock(), 2000,
-            "Navigation stopped: /obstacles_safe stale (%.3f s > %.3f s)",
+            "Navigation stopped and goal cleared: /obstacles_safe stale "
+            "(%.3f s > %.3f s); a new goal is required",
             obstacle_age, obstacle_timeout_);
+        // The same command-state reset used by a right-click Stop. Clearing
+        // the goal latches the stop across sensor recovery: inference cannot
+        // resume until the operator explicitly sends a new goal.
+        ClearGoalCommandState();
         SetZeroCommand();
         return false;
     }

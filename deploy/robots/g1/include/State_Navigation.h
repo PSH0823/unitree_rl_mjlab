@@ -53,6 +53,7 @@ private:
     void OnObstacles(const obstacle_detector::msg::Obstacles& message);
     void OnGoal(const geometry_msgs::msg::PoseStamped& message);
     void OnStop(const std_msgs::msg::Empty&);
+    void ClearGoalCommandState();
     void PolicyLoop();
     bool UpdateHighLevel();
     void SetZeroCommand();

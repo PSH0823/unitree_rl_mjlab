@@ -103,4 +103,4 @@ FSM:
 
 console_fsm_control:
   enabled: true
-  simulation_only: true
+  simulation_only: false
