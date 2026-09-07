@@ -435,6 +435,8 @@ void State_Navigation::enter() {
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
         goal_ = {};
+        odometry_recovery_pending_ = false;
+        odometry_recovery_samples_ = 0;
         velocity_command_ = {0.0f, 0.0f, 0.0f};
         previous_normalized_action_ = {0.0f, 0.0f, 0.0f};
     }
@@ -453,6 +455,8 @@ void State_Navigation::exit() {
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
         goal_ = {};
+        odometry_recovery_pending_ = false;
+        odometry_recovery_samples_ = 0;
         previous_normalized_action_ = {0.0f, 0.0f, 0.0f};
     }
     SetZeroCommand();
@@ -473,25 +477,49 @@ void State_Navigation::run() {
 void State_Navigation::OnOdometry(const nav_msgs::msg::Odometry& msg) {
     const auto now = SteadyClock::now();
     const double yaw = QuaternionYaw(msg.pose.pose.orientation);
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    double vx = msg.twist.twist.linear.x;
-    double vy = msg.twist.twist.linear.y;
-    double wz = msg.twist.twist.angular.z;
-    if (robot_.valid) {
-        const double dt = std::chrono::duration<double>(now - robot_.received).count();
-        if (dt > 1.0e-3 && dt < 0.5) {
-            const double raw_vx = (msg.pose.pose.position.x - robot_.x) / dt;
-            const double raw_vy = (msg.pose.pose.position.y - robot_.y) / dt;
-            const double raw_wz = WrapAngle(yaw - robot_.yaw) / dt;
-            const double alpha =
-                std::clamp(dt / (odom_velocity_filter_tau_ + dt), 0.0, 1.0);
-            vx = (1.0 - alpha) * robot_.vx_world + alpha * raw_vx;
-            vy = (1.0 - alpha) * robot_.vy_world + alpha * raw_vy;
-            wz = (1.0 - alpha) * robot_.yaw_rate + alpha * raw_wz;
+    bool recovered = false;
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        double vx = msg.twist.twist.linear.x;
+        double vy = msg.twist.twist.linear.y;
+        double wz = msg.twist.twist.angular.z;
+        double dt = 0.0;
+        if (robot_.valid) {
+            dt = std::chrono::duration<double>(now - robot_.received).count();
+            if (dt > 1.0e-3 && dt < 0.5) {
+                const double raw_vx = (msg.pose.pose.position.x - robot_.x) / dt;
+                const double raw_vy = (msg.pose.pose.position.y - robot_.y) / dt;
+                const double raw_wz = WrapAngle(yaw - robot_.yaw) / dt;
+                const double alpha =
+                    std::clamp(dt / (odom_velocity_filter_tau_ + dt), 0.0, 1.0);
+                vx = (1.0 - alpha) * robot_.vx_world + alpha * raw_vx;
+                vy = (1.0 - alpha) * robot_.vy_world + alpha * raw_vy;
+                wz = (1.0 - alpha) * robot_.yaw_rate + alpha * raw_wz;
+            }
         }
+
+        if (odometry_recovery_pending_) {
+            // The first message after a gap starts a new run. Subsequent
+            // messages must remain inside the configured stale timeout.
+            if (dt > 0.0 && dt <= odometry_timeout_) {
+                ++odometry_recovery_samples_;
+            } else {
+                odometry_recovery_samples_ = 1;
+            }
+            if (odometry_recovery_samples_ >= 3) {
+                odometry_recovery_pending_ = false;
+                odometry_recovery_samples_ = 0;
+                recovered = true;
+            }
+        }
+        robot_ = {msg.pose.pose.position.x, msg.pose.pose.position.y, yaw,
+                  vx, vy, wz, now, true};
     }
-    robot_ = {msg.pose.pose.position.x, msg.pose.pose.position.y, yaw,
-              vx, vy, wz, now, true};
+    if (recovered) {
+        RCLCPP_INFO(node_->get_logger(),
+                    "Navigation odometry recovered: 3 consecutive valid "
+                    "samples; waiting for a new goal");
+    }
 }
 
 void State_Navigation::OnObstacles(const obstacle_detector::msg::Obstacles& msg) {
@@ -758,6 +786,13 @@ bool State_Navigation::UpdateHighLevel() {
             "Navigation stopped and goal cleared: /odom stale "
             "(%.3f s > %.3f s); a new goal is required",
             odometry_age, odometry_timeout_);
+        {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            if (!odometry_recovery_pending_) {
+                odometry_recovery_pending_ = true;
+                odometry_recovery_samples_ = 0;
+            }
+        }
         ClearGoalCommandState();
         SetZeroCommand();
         return false;

@@ -149,3 +149,94 @@ bad tilt, or repeated low-level ONNX failure transitions to Passive.
 Navigation intentionally has no direct operator transition to Passive. Exit
 with `RT + X` to CustomVelocity first, then use `LT + B` for Passive. Automatic
 Passive transitions for the hard faults listed above remain active.
+
+### Recommended LAN split: robot driver, laptop perception
+
+When the robot computer and operator laptop are connected by a reliable wired
+LAN, it is recommended to leave only the Mid-360 driver on the robot computer
+and run DLIO, obstacle perception and RViz on the more powerful laptop.  The
+Mid-360 is configured to send its raw UDP packets to the robot computer, so the
+driver remains there; ROS 2 then carries `/livox/lidar` and `/livox/imu` over
+the LAN to the laptop.
+
+This split is optional.  Use the all-on-robot procedure above if the LAN cannot
+reliably carry the raw point cloud.  Both computers must use the same
+`ROS_DOMAIN_ID`, `rmw_fastrtps_cpp`, and `ROS_LOCALHOST_ONLY=0`. If multicast
+discovery is blocked, configure reciprocal `G1_PEER_IP` values and use the
+repository's `net_env.sh peers` setup. Do not run a second Livox driver or a
+second DLIO instance on the other computer.
+
+1. On the stationary robot, start only the hardware driver:
+
+   ```bash
+   cd ~/unitree_rl_mjlab
+   source ~/.g1_net_env
+   source /opt/ros/foxy/setup.bash
+   source ros2/install/setup.bash
+   ros2 launch g1_perception_bringup source_hw.launch.py \
+       driver:=on lio:=off
+   ```
+
+2. On the operator laptop, start DLIO, perception and RViz from the received
+   ROS topics:
+
+   ```bash
+   cd ~/unitree_rl_mjlab
+   source ~/.g1_net_env
+   source /opt/ros/humble/setup.bash
+   source ros2/install/setup.bash
+   ros2 launch g1_perception_bringup g1_perception_hardware_only.launch.py \
+       driver:=off lio:=dlio diagnostics:=on use_rviz:=true
+   ```
+
+3. Keep the robot motionless until DLIO initializes, then verify from the
+   laptop that the remote sensor input and local outputs are continuous:
+
+   ```bash
+   ros2 topic hz /livox/lidar
+   ros2 topic hz /livox/imu
+   ros2 topic hz /odom
+   ros2 topic hz /obstacles_safe
+   ```
+
+   Check one topic at a time. Expected nominal rates are approximately 10 Hz
+   for `/livox/lidar`, 200 Hz for `/livox/imu`, 100 Hz for `/odom`, and 10 Hz
+   for `/obstacles_safe`. Only enter Navigation after these streams are stable.
+   If `/livox/lidar` or `/livox/imu` is already irregular on the laptop, first
+   investigate LAN/DDS throughput. If those inputs remain regular while
+   `/odom` stalls, investigate DLIO or laptop scheduling instead.
+
+
+cd ~/unitree_rl_mjlab
+source ~/.g1_net_env
+source /opt/ros/humble/setup.bash
+source ros2/install/setup.bash
+
+mkdir -p ~/nav_diagnosis
+
+ros2 run g1_perception_bringup hw_record.sh \
+    ~/nav_diagnosis 12 1200 \
+    /livox/imu \
+    /odom \
+    /tf \
+    /tf_static \
+    /scan \
+    /raw_obstacles \
+    /tracked_obstacles \
+    /obstacles_safe \
+    /diagnostics
+
+cd ~/unitree_rl_mjlab
+source ~/.g1_net_env
+source /opt/ros/humble/setup.bash
+source ros2/install/setup.bash
+stdbuf -oL ros2 topic hz /livox/lidar --window 100 2>&1 \
+    | tee ~/nav_diagnosis/lidar_hz.log
+
+cd ~/unitree_rl_mjlab
+source ~/.g1_net_env
+source /opt/ros/humble/setup.bash
+source ros2/install/setup.bash
+stdbuf -oL ros2 topic hz /livox/lidar --window 100 2>&1 \
+    | awk '{print strftime("%Y-%m-%dT%H:%M:%S%z"), $0; fflush()}' \
+    | tee ~/nav_diagnosis/lidar_hz.log

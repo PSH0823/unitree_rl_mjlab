@@ -98,6 +98,10 @@ private:
 
     mutable std::mutex data_mutex_;
     RobotSnapshot robot_;
+    // Recovery is informational: it never restores the cleared goal or
+    // resumes high-level inference automatically.
+    bool odometry_recovery_pending_ = false;
+    int odometry_recovery_samples_ = 0;
     GoalSnapshot goal_;
     std::vector<dpcbf::ObstacleState> obstacles_;
     SteadyClock::time_point obstacles_received_{};
