@@ -36,6 +36,10 @@ install(PROGRAMS
         # The Fast DDS link checker: run by the operator on BOTH machines, and
         # on Computer 3 the only bringup file that is needed at all.
         scripts/g1_link_check.sh
+        # Real-time contention probe: run on the onboard PC when the
+        # controller and perception share the Orin NX, to decide whether the
+        # 1 kHz FSM thread is actually being starved.
+        scripts/cpu_probe.sh
         DESTINATION lib/${PROJECT_NAME})
 # Visualization-link environment (sourced, not run): Computer 2/3 CycloneDDS
 # setup for the off-board plotting client. Installed under share/ because

@@ -54,6 +54,7 @@ public:
         global_phase = 0;
         episode_length = 0;
         robot->update();
+        latch_external_velocity_command();
         action_manager->reset();
         observation_manager->reset();
     }
@@ -62,6 +63,7 @@ public:
     {
         episode_length += 1;
         robot->update();
+        latch_external_velocity_command();
         auto obs = observation_manager->compute();
         auto action = alg->act(obs);
         action_manager->process_action(action);
@@ -73,10 +75,18 @@ public:
         external_velocity_command_ = command;
     }
 
-    std::array<float, 3> external_velocity_command() const
+    // The command producer may run on its own thread, so every observation
+    // term within one step must read the same value: a command that changed
+    // between terms would pair a walking velocity with a stopped gait phase.
+    void latch_external_velocity_command()
     {
         std::lock_guard<std::mutex> lock(external_command_mutex_);
-        return external_velocity_command_;
+        latched_external_velocity_command_ = external_velocity_command_;
+    }
+
+    std::array<float, 3> external_velocity_command() const
+    {
+        return latched_external_velocity_command_;
     }
 
     float step_dt;
@@ -93,6 +103,10 @@ public:
 private:
     mutable std::mutex external_command_mutex_;
     std::array<float, 3> external_velocity_command_{0.0f, 0.0f, 0.0f};
+    // Read only by the thread that calls step()/reset(). The initialiser is
+    // load-bearing: ObservationManager's constructor evaluates every term
+    // before any latch has run.
+    std::array<float, 3> latched_external_velocity_command_{0.0f, 0.0f, 0.0f};
 };
 
 };

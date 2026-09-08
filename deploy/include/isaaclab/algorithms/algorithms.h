@@ -4,6 +4,7 @@
 #pragma once
 
 #include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 #include <iostream>
 #include <mutex>
 
@@ -29,11 +30,23 @@ protected:
 class OrtRunner : public Algorithms
 {
 public:
-    OrtRunner(std::string model_path)
+    OrtRunner(std::string model_path, int intra_op_num_threads = 0)
     {
         // Init Model
         env = Ort::Env(ORT_LOGGING_LEVEL_WARNING, "onnx_model");
         session_options.SetGraphOptimizationLevel(ORT_ENABLE_EXTENDED);
+
+        // Left alone, the session builds an intra-op pool sized to the core count
+        // whose workers spin before blocking, and that preempts the policy thread.
+        // 0 keeps that default; callers opt in per policy, after measuring it.
+        if (intra_op_num_threads > 0)
+        {
+            session_options.SetIntraOpNumThreads(intra_op_num_threads);
+            session_options.SetInterOpNumThreads(1);
+            session_options.SetExecutionMode(ORT_SEQUENTIAL);
+            session_options.AddConfigEntry(kOrtSessionOptionsConfigAllowIntraOpSpinning, "0");
+            session_options.AddConfigEntry(kOrtSessionOptionsConfigAllowInterOpSpinning, "0");
+        }
 
         session = std::make_unique<Ort::Session>(env, model_path.c_str(), session_options);
 

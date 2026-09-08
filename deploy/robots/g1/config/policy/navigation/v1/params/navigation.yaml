@@ -37,6 +37,10 @@ actions:
     ang_vel_z: [-1.0, 1.0]
 
 topics:
+  # Frame names are compiled in, not configurable. Goals and
+  # /obstacles_safe are rejected unless header.frame_id is empty or
+  # "odom"; markers are published in odom and the command in base_link;
+  # /odom itself is consumed without a frame check.
   odometry: /odom
   obstacles: /obstacles_safe
   goal: /navigation/goal
@@ -46,10 +50,6 @@ topics:
   # linear.x/y = sagittal/lateral velocity, angular.z = yaw rate. Published
   # every time the command handed to the low-level policy changes.
   command: /navigation/cmd_vel
-
-frames:
-  world: odom
-  robot: base_link
 
 safety:
   command_timeout: 0.25
@@ -64,8 +64,100 @@ safety:
     duration: 0.05
   invalid_low_level_output_limit: 3
 
+  # Deadline health of the 50 Hz policy loop (State_Navigation::PolicyLoop).
+  # A miss is one iteration that finished more than `tolerance` seconds after
+  # its 20 ms slot. The loop then drops the missed slots instead of running
+  # policy steps back to back, because each step also advances the gait phase
+  # by 1/30 of a stride: catching up would replay the commanded gait into the
+  # 1 kHz output far faster than it was trained. The cost of dropping is that
+  # the 1 kHz output holds the previous joint target for longer.
+  policy_deadline:
+    # Wake-up jitter below this is not counted as a miss [s]. It is also the
+    # rate loss the loop may sustain silently: at 0.002 a permanent 21.5 ms
+    # period (46.5 Hz) never warns.
+    tolerance: 0.002
+    # Policy steps after entry excluded from all four statistics. reset(),
+    # the first Run on each ONNX graph and the first DDS write land here and
+    # are late by construction.
+    warmup_steps: 5
+    # Consecutive misses before the goal is cleared and the command zeroed,
+    # after which a new goal is required. The mechanism is the stale-/odom
+    # stop, but the zero is a step and not a ramp and it arrives while the
+    # joint targets are already late. 0 disables, which is warn-only and
+    # matches the behaviour before this key existed.
+    stop_streak: 0
+    # Consecutive misses before requesting Passive. Passive sets kp=0 and
+    # kd=3 on every joint, so an upright robot collapses, and the transition
+    # runs exit() on the 1 kHz thread at the worst possible moment. Raise
+    # this off 0 only with measured streak and worst-overrun numbers from the
+    # warning, never below stop_streak, and validate on the stand. 0 disables.
+    fault_streak: 0
+
+  # The 1 kHz FSM thread re-sends the newest low-level joint target every
+  # millisecond while PolicyLoop refreshes it at 1/step_dt = 50 Hz, so an age
+  # of one or two step_dt is normal. A larger age means the policy thread is
+  # starved and the legs are frozen at whatever pose the last step produced --
+  # the mechanism by which a late policy becomes a fall. Ages are seconds on
+  # steady_clock, measured from the moment PolicyLoop stored the target.
+  #
+  # SHIPPED DISABLED. The ladder ends in a Passive transition, which on an
+  # upright robot is a damped collapse, and no threshold here has been
+  # measured on this Orin NX. Enable it only after cpu_probe.sh runs A/B/C
+  # have produced real staleness numbers and the ladder has been watched once
+  # on the gantry. With enabled: false the actuation is exactly today's, with
+  # one intentional exception: run() no longer publishes joint_targets_ before
+  # the first target of an entry exists (it would otherwise be the previous
+  # entry's frozen pose, or 29 zeros on the very first entry).
+  joint_target_watchdog:
+    enabled: false
+    # Log only, command unchanged. 3 x step_dt: one dropped policy tick is
+    # scheduling jitter, three in a row is not.
+    warn_age: 0.06
+    # Start fading kp toward fade_stiffness_scale. 10 x step_dt is a third of
+    # the 0.6 s external_gait_phase period, so the step in progress can no
+    # longer be rescued by a late target.
+    fade_age: 0.20
+    # Fade complete; latch the fault. kp has already reached the floor, so
+    # neither this rung nor the Passive entry that follows steps the torque.
+    # The latch is terminal for the entry: a policy that recovers afterwards
+    # cannot snap the stiffness back onto the errors the fade opened up.
+    fault_age: 0.35
+    # Same ladder, shifted, while waiting for the first target after enter();
+    # covers the cold first inference of the three ONNX sessions.
+    startup_age: 1.0
+    # How long a return to full stiffness takes once a target is fresh again
+    # [s]. Only reachable before the fault latches.
+    restore_seconds: 0.5
+    # Fraction of the low_level_deploy.yaml stiffness/damping left at
+    # fault_age. kp 0 with kd unchanged is the Passive command shape (damping
+    # only), reached continuously instead of as a step. Fading kd as well
+    # would leave zero commanded torque before Passive restores it.
+    fade_stiffness_scale: 0.0
+    fade_damping_scale: 1.0
+    # Request Passive once the fault latches. Known residual at that handoff:
+    # State_Passive applies a flat kd of 3.0 from config.yaml, while
+    # low_level_deploy.yaml damps the knee and hip-roll at 6.3, so those
+    # joints see a one-tick drop in damping. Unavoidable without coupling the
+    # two configs.
+    passive_on_fault: true
+
+# ONNX Runtime gives every session its own intra-op thread pool sized to the
+# core count, and those workers spin before blocking. The three sessions here
+# (low-level policy, GAT encoder, policy head) put ~21 spinning threads on the
+# eight-core Orin NX against the 1 kHz control thread. One thread per session
+# removes the pools entirely and measured faster on all three of these models:
+# worst-case low-level inference went from 6.0 ms to 0.02 ms when the pool had
+# to share a core. 0 restores the ONNX Runtime default and is the rollback if
+# the field disagrees with the bench. Above 8 oversubscribes the target.
+runtime:
+  onnx_intra_op_threads: 1
+
 visualization:
-  enabled: true
+  enabled: false
+  # Upper bound only. Markers are assembled inside the high-level update,
+  # so the effective rate is min(rate_hz, 1/high_level_dt) and at the
+  # shipped 0.1 s this never binds. Markers carry a 0.25 s lifetime, so a
+  # value below 4 Hz makes them blink out in the operator UI.
   rate_hz: 20.0
   relative_velocity_arrow_seconds: 1.0
   parabola_lateral_limit: 1.0

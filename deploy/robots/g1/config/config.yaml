@@ -97,6 +97,7 @@ FSM:
 
   Navigation:
     transitions:
+      Passive: LT + B.on_pressed
       CustomVelocity: RT + X.on_pressed
 
     policy_dir: config/policy/navigation/v1
@@ -104,3 +105,22 @@ FSM:
 console_fsm_control:
   enabled: true
   simulation_only: false
+
+control_thread:
+  # 1 kHz FSM loop. -1 lets the scheduler place it, which is what the SDK
+  # does everywhere else and what this ships with. The value this replaced
+  # was a hard-coded 0, and CPU 0 is the one core to avoid outright: on this
+  # robot it takes 99.4% of the NET_RX softirq work and every one of eth0's
+  # hard interrupts, which is where the Mid-360's raw UDP arrives. Pinning
+  # to a specific core is still a follow-up, not a free win, because it
+  # trades away free migration and nothing reserves the core. Measure with
+  # cpu_probe.sh runs A/B/C first. A core this process may not use falls
+  # back to unpinned with an error log.
+  cpu: -1
+
+  # SCHED_FIFO priority, 1-49; 0 is the SCHED_OTHER scheduling the
+  # controller has always used. Needs CAP_SYS_NICE. Leave it at 0: this
+  # thread publishes on the DDS channel every tick and takes the spdlog and
+  # joint-target mutexes, none of which do priority inheritance, so raising
+  # only this thread adds inversion paths at 1 kHz.
+  priority: 0
