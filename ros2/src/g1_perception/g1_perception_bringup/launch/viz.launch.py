@@ -30,8 +30,13 @@ def generate_launch_description():
         get_package_share_directory('g1_perception_bringup'),
         '..', '..', '..', '..', 'dpcbf', 'config', 'dpcbf_config.yaml'))
     use_sim_time = LaunchConfiguration('use_sim_time')
+    show_obstacle_ids = LaunchConfiguration('show_obstacle_ids')
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument(
+            'show_obstacle_ids', default_value='false',
+            choices=['false', 'true'],
+            description='show detector UIDs in obstacle and DPCBF markers'),
         DeclareLaunchArgument('obstacles_topic', default_value='/sim/gt_obstacles'),
         DeclareLaunchArgument('overlay', default_value='on',
                               description='dpcbf_overlay marker layer: on|off'),
@@ -55,7 +60,7 @@ def generate_launch_description():
             parameters=[{'use_sim_time': use_sim_time,
                          'topic': LaunchConfiguration('obstacles_topic'),
                          'color_r': 0.2, 'color_g': 0.8, 'color_b': 0.2,
-                         'alpha': 0.35, 'show_ids': True}],
+                         'alpha': 0.35, 'show_ids': show_obstacle_ids}],
         ),
         Node(
             package='g1_perception_utils',
@@ -77,7 +82,7 @@ def generate_launch_description():
                          'topic': '/tracked_obstacles',
                          'cylinder_height': 1.2,
                          'color_r': 1.0, 'color_g': 0.55, 'color_b': 0.1,
-                         'alpha': 0.6, 'show_ids': True}],
+                         'alpha': 0.6, 'show_ids': show_obstacle_ids}],
         ),
         Node(
             package='g1_perception_utils',
@@ -101,7 +106,8 @@ def generate_launch_description():
                 ["'", LaunchConfiguration('overlay'), "' == 'on'"])),
             parameters=[{'use_sim_time': use_sim_time,
                          'dpcbf_config': LaunchConfiguration('dpcbf_config'),
-                         'log_path': LaunchConfiguration('overlay_log')}],
+                         'log_path': LaunchConfiguration('overlay_log'),
+                         'show_ids': show_obstacle_ids}],
         ),
         Node(
             package='rviz2',

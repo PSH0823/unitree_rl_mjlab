@@ -71,6 +71,10 @@ def generate_launch_description():
         OpaqueFunction(function=_reject_patchwork),
         DeclareLaunchArgument('viz', default_value='off',
                               choices=['off', 'rviz']),
+        DeclareLaunchArgument(
+            'show_obstacle_ids', default_value='false',
+            choices=['false', 'true'],
+            description='show detector UIDs in RViz obstacle markers'),
         DeclareLaunchArgument('record', default_value='off',
                               choices=['off', 'on']),
         # Sim time follows the source unless explicitly overridden. This is
@@ -90,7 +94,8 @@ def generate_launch_description():
         _include('perception.launch.py', use_sim_time=use_sim_time),
         _include('viz.launch.py',
                  condition=LaunchConfigurationEquals('viz', 'rviz'),
-                 use_sim_time=use_sim_time),
+                 use_sim_time=use_sim_time,
+                 show_obstacle_ids=LaunchConfiguration('show_obstacle_ids')),
         _include('record.launch.py',
                  condition=LaunchConfigurationEquals('record', 'on')),
     ])

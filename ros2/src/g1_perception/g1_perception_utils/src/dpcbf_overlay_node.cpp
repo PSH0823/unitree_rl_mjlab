@@ -106,6 +106,7 @@ class DpcbfOverlay : public rclcpp::Node {
     vel_axis_limit_ = declare_parameter<double>("vel_axis_limit", 3.0);
     panel_offset_ = declare_parameter<double>("panel_offset_m", 4.6);
     error_magnify_ = declare_parameter<double>("error_magnify", 1.0);
+    show_ids_ = declare_parameter<bool>("show_ids", false);
     // Pose-difference smoothing. Swept offline against the 1 kHz capture's
     // exact body velocity over a walking window (runbook §4.6): mean |dv|
     // 0.032 m/s at tau=0, 0.032 at 0.02, 0.049 at 0.05, 0.077 at 0.15 --
@@ -625,11 +626,19 @@ class DpcbfOverlay : public rclcpp::Node {
     out.markers.push_back(arrow);
 
     char buf[160];
-    std::snprintf(buf, sizeof(buf),
-                  "#%d uid=%d  d=%.2f m  h=%.3f\nvertex=%.2f m/s  "
-                  "curv=%.2f s/m",
-                  b.rank + 1, b.obstacle.id, b.distance, b.h,
-                  b.boundary_vertex_x, b.boundary_curvature);
+    if (show_ids_) {
+      std::snprintf(buf, sizeof(buf),
+                    "#%d uid=%d  d=%.2f m  h=%.3f\nvertex=%.2f m/s  "
+                    "curv=%.2f s/m",
+                    b.rank + 1, b.obstacle.id, b.distance, b.h,
+                    b.boundary_vertex_x, b.boundary_curvature);
+    } else {
+      std::snprintf(buf, sizeof(buf),
+                    "#%d  d=%.2f m  h=%.3f\nvertex=%.2f m/s  "
+                    "curv=%.2f s/m",
+                    b.rank + 1, b.distance, b.h,
+                    b.boundary_vertex_x, b.boundary_curvature);
+    }
     out.markers.push_back(Text(stamp, "vel_card", 200 + k, cx, half + 0.16,
                                0.13, buf, Col(0.1, 0.1, 0.1, 1.0), vel_frame_));
     out.markers.push_back(Text(stamp, "vel_axes", 300 + k, cx + half - 0.28,
@@ -746,6 +755,7 @@ class DpcbfOverlay : public rclcpp::Node {
   double rate_hz_ = 10.0, gt_timeout_ = 2.0, nn_gate_ = 0.5;
   double vel_scale_ = 0.35, vel_axis_limit_ = 3.0, panel_offset_ = 4.6;
   double error_magnify_ = 1.0;
+  bool show_ids_ = false;
   int max_cards_ = 3;
   double vel_tau_ = 0.02;  // pose-difference smoothing constant [s]
 
