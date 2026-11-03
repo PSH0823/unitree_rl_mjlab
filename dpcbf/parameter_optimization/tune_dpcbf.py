@@ -101,9 +101,6 @@ CONFIG: dict[str, Any] = {
         "default_num_constraints": 10,
         # 0: distance, 1: relative-velocity closing alignment
         "obstacle_priority": 0,
-        # a_s/a_l are normalized at this reference rate. Their actual per-tick
-        # velocity change is multiplied by reference_rate * control_dt.
-        "reference_control_frequency_hz": 500.0,
         "ecbf_enabled": True,
         "alpha_ecbf": 1.0,
         "odcbf_enabled": False,

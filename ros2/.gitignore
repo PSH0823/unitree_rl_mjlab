@@ -1,0 +1,36 @@
+# External sources are pinned in deps.repos and imported with vcstool — never committed.
+src/external/
+# colcon artifacts (incl. per-arch out dirs: build_arm64/, install_arm64/,
+# and the Foxy container's build_foxy/ install_foxy/ log_foxy/)
+build*/
+install*/
+log/
+log_foxy/
+.colcon_foxy/
+# bags are big — regenerate per test_fixtures/README.md; the wall_scene
+# fixture (generator + README, outputs go to /tmp) IS committed (Phase 2)
+test_fixtures/*
+!test_fixtures/README.md
+!test_fixtures/wall_scene/
+!test_fixtures/scenarios/
+# Phase 5B hardware sessions: bags stay out, the surveyed-GT layout files and
+# per-session READMEs are committed (they are inputs to the T4-hardware run,
+# not outputs of it).
+!test_fixtures/hw/
+test_fixtures/hw/*/*
+!test_fixtures/hw/*/*.yaml
+!test_fixtures/hw/*/README.md
+
+# T1 baseline: instrumentation patch + command profile + README are
+# committed; the capture itself is a generated fixture (md5 in §21)
+!test_fixtures/t1_baseline/
+test_fixtures/t1_baseline/*.bin
+__pycache__/
+
+# evidence/: raw per-node logs and per-run trace/metrics dumps are
+# regenerable and aren't referenced by filename in any doc; curated
+# summaries (.md/.csv/.png/.txt named in the checklists/README) stay tracked.
+evidence/**/*.log
+evidence/**/*.jsonl
+evidence/**/*.json
+!evidence/phase5b/selfhit.json

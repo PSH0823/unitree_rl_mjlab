@@ -1,0 +1,113 @@
+# External dependency pins for the DPCBF perception subsystem (§13).
+# Every entry is pinned by SHA — never a floating branch.
+# Resolution date: 2026-08-01 (git ls-remote against upstream).
+#
+# Import:  cd ros2 && vcs import src < deps.repos
+#
+# Branch provenance (informational; the SHA is authoritative):
+#   cyclonedds              tag 0.10.2
+#   cyclonedds-cxx          tag 0.10.2
+#   unitree_sdk2            main
+#   unitree_dds_wrapper     Agnel-Wang fork, commit BEFORE "delete cpp" (f20eb69) —
+#                           the C++ wrapper simulate needs was removed upstream;
+#                           unitreerobotics/unitree_dds_wrapper is python-only.
+#                           Header-only: install = copy cpp/include/unitree into prefix.
+#   rmw_cyclonedds          humble
+#   pointcloud_to_laserscan humble
+#   obstacle_detector_2     humble-devel  (fork target — see §5.3; org fork pending;
+#                           recorded patches 0003 (P-1) + 0004 (P-2), Phase 3)
+#   MuJoCo-LiDAR            main          (python; installed via PYTHONPATH, not colcon)
+#   Livox-SDK2              tag v1.3.1 — Phase-5A addition. Prerequisite of
+#                           livox_ros_driver2 (which find_library's
+#                           liblivox_lidar_sdk_shared.so). Plain CMake, no
+#                           package.xml → COLCON_IGNOREd and built into the
+#                           merged prefix by the livox_sdk2_vendor package.
+#                           Tag pinned, not master: master is v1.3.1 + one
+#                           commit (Mid-360S IMU range, Ubuntu 24.04 build
+#                           fix) that this robot/distro does not need.
+#   livox_ros_driver2       tag 1.2.6 (== master @ pin date) — Phase-5A.
+#                           Needs package_ROS2.xml copied to package.xml and
+#                           -DROS_EDITION=ROS2 -DDISTRO_ROS=humble (upstream
+#                           does this in build.sh, which cannot be used inside
+#                           an existing colcon workspace: it rm -rf's
+#                           build/devel/install). Patch 0005 carries both plus
+#                           the /livox/imu frame_id fix.
+#   direct_lidar_inertial_odometry
+#                           feature/ros2 — Phase-5A, LIO primary (§5.7).
+#                           Patch 0006: cloud subscription SensorData QoS.
+#   perception_pcl          tag 2.6.1 — Phase-2 addition. Rationale: the Humble
+#                           BINARY pcl_ros (2.4.5) ships NO filter components
+#                           (only pcd_to_pointcloud + stale ROS1 nodelet XMLs);
+#                           the ROS2 CropBox port (PR #401) first SHIPS
+#                           componentized in 2.6.1 (2.5.x still has it commented
+#                           out of CMake). 2.6.1 builds clean on Humble
+#                           (message_filters .h includes). Only pcl_ros is built
+#                           (pcl_conversions stays the Humble binary; metapackage
+#                           COLCON_IGNOREd). Patch 0002 makes the filter output
+#                           publisher SensorDataQoS per §7.1.
+repositories:
+  external/cyclonedds:
+    type: git
+    url: https://github.com/eclipse-cyclonedds/cyclonedds.git
+    version: 9995905bce6c4cf9f740d6438bbf7fcfd1c83dfd
+  external/cyclonedds-cxx:
+    type: git
+    url: https://github.com/eclipse-cyclonedds/cyclonedds-cxx.git
+    version: 2a372d2c4597faea54543b925755fa2d7cdd4232
+  external/unitree_sdk2:
+    type: git
+    url: https://github.com/unitreerobotics/unitree_sdk2.git
+    version: 21d0a3b2c46ee48c8fdf2783becb6be3beb0a59b
+  external/unitree_dds_wrapper:
+    type: git
+    url: https://github.com/Agnel-Wang/unitree_dds_wrapper.git
+    version: 9dc107d2c163539ff48aa98454ca037815da821e
+  external/rmw_cyclonedds:
+    type: git
+    url: https://github.com/ros2/rmw_cyclonedds.git
+    version: fa8831b9f331d669c3ea408fd00606a223c6bbd9
+  external/pointcloud_to_laserscan:
+    type: git
+    url: https://github.com/ros-perception/pointcloud_to_laserscan.git
+    version: 59bf996fb3ee7db0026a5cd3ce0d2a39d2e602ea
+  external/obstacle_detector_2:
+    type: git
+    url: https://github.com/harmony-eu/obstacle_detector_2.git
+    version: 6ff7ac48d54e41c559158a4472a6df8f97eaf616
+  external/MuJoCo-LiDAR:
+    type: git
+    url: https://github.com/TATP-233/MuJoCo-LiDAR.git
+    version: 287b50122ac5188e42ec492484965335a6a55bef
+  external/perception_pcl:
+    type: git
+    url: https://github.com/ros-perception/perception_pcl.git
+    version: 9d078ebf1dffa9723bb4c6e98654e6049c4d366f
+  # --- hardware stack (Phase 5A; SHAs resolved 2026-08-01) -----------------
+  external/Livox-SDK2:
+    type: git
+    url: https://github.com/Livox-SDK/Livox-SDK2.git
+    version: f5d9375f84efe2b15bc0a052d3e18482ed13adf4   # tag v1.3.1, 2026-04-15
+  external/livox_ros_driver2:
+    type: git
+    url: https://github.com/Livox-SDK/livox_ros_driver2.git
+    version: 13eb05e4e6dd7a765b934d0c5fd6236676a57b49   # tag 1.2.6, 2026-04-14
+  external/direct_lidar_inertial_odometry:
+    type: git
+    url: https://github.com/vectr-ucla/direct_lidar_inertial_odometry.git
+    version: c8acc37100e349d70a9d8432d656cbce7e5072cd   # feature/ros2, 2024-11-21
+# ---------------------------------------------------------------------------
+# Reserved for later phases (SHAs resolved 2026-08-01, not imported yet):
+#   external/FAST_LIO_LOCALIZATION_HUMANOID:   # Q-4 bake-off alternate (§5.7)
+#     url: https://github.com/deepglint/FAST_LIO_LOCALIZATION_HUMANOID.git
+#     version: df4772ec4797172430e7efe990711d09a529f4ad   # humble
+#     # NOT imported: it needs livox CustomMsg, i.e. driver xfer_format 1,
+#     # which the driver publishes INSTEAD OF (not alongside) PointCloud2 —
+#     # see the Phase-5A §5.6 correction. The bake-off is therefore a separate
+#     # capture session, not a co-run; build it only if Q-4 is exercised.
+#   external/patchwork-plusplus:               # Phase 7, ground seg (§5.8)
+#     url: https://github.com/url-kaist/patchwork-plusplus.git
+#     version: 3e6903a1d5537a4cc2ace897b0bbb98a92d6014c   # master
+#   external/rosbag2_storage_mcap:             # MCAP recording (§14.4); blocked on apt/sudo
+#     url: https://github.com/ros-tooling/rosbag2_storage_mcap.git
+#     version: c1c2159679921a4f4392f370172c28e7b3b01452   # main
+# ---------------------------------------------------------------------------

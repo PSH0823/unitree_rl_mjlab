@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Computer 2 <-> Computer 3 visualization link, ONE NIC, multicast BLOCKED
+     (typical on lab Wi-Fi / managed switches): discovery goes to an
+     explicit peer instead.
+
+     Env vars:
+       G1_VIZ_IFACE   this machine's visualization NIC (e.g. wlan0)
+       G1_VIZ_PEER    the OTHER machine's IP on that network
+                      (on Computer 2: Computer 3's IP; on Computer 3:
+                       Computer 2's IP)
+
+     SPDP unicasts to the peer; data then flows unicast as usual.
+     MaxAutoParticipantIndex bounds the unicast port probe range - raise it
+     if more than ~32 ROS processes share the domain on one host. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="${G1_VIZ_IFACE}"/>
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>32</MaxAutoParticipantIndex>
+      <Peers>
+        <Peer address="${G1_VIZ_PEER}"/>
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

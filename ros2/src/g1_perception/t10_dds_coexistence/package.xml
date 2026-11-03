@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>t10_dds_coexistence</name>
+  <version>0.1.0</version>
+  <description>
+    Gate T10 (§16.2): one process links BOTH unitree_sdk2 and rclcpp
+    (RMW_IMPLEMENTATION=rmw_cyclonedds_cpp, shared domain) and must exchange
+    messages on both stacks without crash or symbol conflict. Gates every
+    later phase (R-3).
+  </description>
+  <maintainer email="joan0219@yonsei.ac.kr">Seohyeon Lim</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <build_depend>unitree_sdk2</build_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

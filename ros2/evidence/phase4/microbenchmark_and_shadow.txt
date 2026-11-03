@@ -1,0 +1,34 @@
+=== estimated-mode live micro-benchmark (session A, 111k queries) ===
+dropped_circles = 0
+frames_received = 944
+query_count = 111145
+query_latency_histogram = le1us:110540 le2us:533 le5us:66 le10us:3 le20us:2 le50us:0 le100us:0 le1e+09us:1
+query_latency_p50_le_us = 1
+query_latency_p99_le_us = 1
+
+=== shadow-mode delta report (clean 75 s arena session) ===
+age_s = 0.024
+command_scale = 1
+dropped_circles = 0
+frames_received = 547
+mode = shadow
+query_count = 66636
+query_latency_histogram = le1us:13417 le2us:41937 le5us:10456 le10us:688 le20us:128 le50us:8 le100us:1 le1e+09us:1
+query_latency_p50_le_us = 2
+query_latency_p99_le_us = 10
+shadow_age_max_s = 0.03
+shadow_age_mean_s = 0.0238099
+shadow_est_unmatched = 1386
+shadow_frames = 547
+shadow_matched = 1494
+shadow_oracle_unmatched = 1752
+shadow_pos_err_max_m = 0.499507
+shadow_pos_err_mean_m = 0.166913
+shadow_radius_margin_min_m = -0.440893
+shadow_vel_err_max_mps = 2.03678
+shadow_vel_err_mean_mps = 0.230001
+staleness_state = fresh
+
+=== complementary: live tracked->nearest-GT distance (90-obstacle arena,
+    suspension rig with freely swinging/yawing base) ===
+n=2600 p50=94mm p90=186mm p99=549mm max=733mm

@@ -2158,6 +2158,16 @@ void Simulate::Sync(bool state_only) {
   // update scene or sync data from user in passive mode
   if (!is_passive_) {
     mjv_updateScene(m_, d_, &this->opt, &this->pert, &this->cam, mjCAT_ALL, &this->scn);
+    if (user_scn) {
+      const int available = this->scn.maxgeom - this->scn.ngeom;
+      const int ngeom = std::min(user_scn->ngeom, available);
+      if (ngeom < user_scn->ngeom) {
+        mj_warning(d_, mjWARN_VGEOMFULL, this->scn.maxgeom);
+      }
+      std::memcpy(this->scn.geoms + this->scn.ngeom, user_scn->geoms,
+                  ngeom * sizeof(mjvGeom));
+      this->scn.ngeom += ngeom;
+    }
   } else {
     if (state_only) {
       int state_size = mj_stateSize(m_, mjSTATE_INTEGRATION);

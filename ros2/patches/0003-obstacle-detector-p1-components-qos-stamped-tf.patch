@@ -1,0 +1,294 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0986f84..06e6dfb 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -11,6 +11,7 @@ project(obstacle_detector)
+ 
+ find_package(ament_cmake REQUIRED)
+ find_package(rclcpp REQUIRED)
++find_package(rclcpp_components REQUIRED)
+ find_package(geometry_msgs REQUIRED)
+ find_package(sensor_msgs REQUIRED)
+ find_package(std_msgs REQUIRED)
+@@ -71,6 +72,21 @@ target_link_libraries(obstacle_publisher "${cpp_typesupport_target}")
+ add_executable(obstacle_extractor_node src/nodes/obstacle_extractor_node.cpp)
+ target_link_libraries(obstacle_extractor_node obstacle_extractor)
+ 
++#
++# Build composable-node components
++#
++add_library(obstacle_detector_components SHARED
++  src/obstacle_extractor_component.cpp
++  src/obstacle_tracker_component.cpp)
++target_link_libraries(obstacle_detector_components obstacle_extractor obstacle_tracker)
++ament_target_dependencies(obstacle_detector_components rclcpp_components ${PROJECT_DEPENDS})
++rclcpp_components_register_node(obstacle_detector_components
++  PLUGIN "obstacle_detector::ObstacleExtractorComponent"
++  EXECUTABLE obstacle_extractor_component_node)
++rclcpp_components_register_node(obstacle_detector_components
++  PLUGIN "obstacle_detector::ObstacleTrackerComponent"
++  EXECUTABLE obstacle_tracker_component_node)
++
+ add_executable(obstacle_tracker_node src/nodes/obstacle_tracker_node.cpp)
+ target_link_libraries(obstacle_tracker_node obstacle_tracker)
+ 
+@@ -99,7 +115,7 @@ target_link_libraries(obstacle_publisher_node obstacle_publisher)
+ #   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+ #   RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION})
+ 
+-install(TARGETS obstacle_extractor obstacle_tracker obstacle_publisher
++install(TARGETS obstacle_extractor obstacle_tracker obstacle_publisher obstacle_detector_components
+   ARCHIVE DESTINATION lib
+   LIBRARY DESTINATION lib
+   RUNTIME DESTINATION lib/${PROJECT_NAME}
+diff --git a/include/obstacle_detector/obstacle_extractor.h b/include/obstacle_detector/obstacle_extractor.h
+index 6391a9e..26127e6 100644
+--- a/include/obstacle_detector/obstacle_extractor.h
++++ b/include/obstacle_detector/obstacle_extractor.h
+@@ -68,7 +68,7 @@ namespace obstacle_detector
+ class ObstacleExtractor
+ {
+ public:
+-  ObstacleExtractor(std::shared_ptr<rclcpp::Node> nh, std::shared_ptr<rclcpp::Node> nh_local);
++  ObstacleExtractor(rclcpp::Node* nh, rclcpp::Node* nh_local);
+   ~ObstacleExtractor();
+ 
+ private:
+@@ -98,8 +98,8 @@ private:
+   void mergeCircles();
+   bool compareCircles(const Circle& c1, const Circle& c2, Circle& merged_circle);
+ 
+-  std::shared_ptr<rclcpp::Node> nh_;
+-  std::shared_ptr<rclcpp::Node> nh_local_;
++  rclcpp::Node* nh_;
++  rclcpp::Node* nh_local_;
+ 
+   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+   rclcpp::Subscription<sensor_msgs::msg::PointCloud>::SharedPtr pcl_sub_;
+diff --git a/include/obstacle_detector/obstacle_tracker.h b/include/obstacle_detector/obstacle_tracker.h
+index 03e11ce..295543a 100644
+--- a/include/obstacle_detector/obstacle_tracker.h
++++ b/include/obstacle_detector/obstacle_tracker.h
+@@ -58,7 +58,7 @@ namespace obstacle_detector
+ 
+ class ObstacleTracker {
+ public:
+-  ObstacleTracker(std::shared_ptr<rclcpp::Node> nh, std::shared_ptr<rclcpp::Node> nh_local);
++  ObstacleTracker(rclcpp::Node* nh, rclcpp::Node* nh_local);
+   ~ObstacleTracker();
+ 
+ private:
+@@ -102,8 +102,8 @@ private:
+   visualization_msgs::msg::Marker getMarkerText(uid_t uid);
+   visualization_msgs::msg::Marker getMarkerVelocityArrow(uid_t uid, double px, double py, double vx, double vy);
+ 
+-  std::shared_ptr<rclcpp::Node> nh_;
+-  std::shared_ptr<rclcpp::Node> nh_local_;
++  rclcpp::Node* nh_;
++  rclcpp::Node* nh_local_;
+ 
+   rclcpp::Subscription<obstacle_detector::msg::Obstacles>::SharedPtr obstacles_sub_;
+   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+diff --git a/package.xml b/package.xml
+index e291150..1579e88 100644
+--- a/package.xml
++++ b/package.xml
+@@ -16,6 +16,7 @@
+   <depend>tf2_ros</depend>
+   <depend>rviz</depend>
+   <depend>rclcpp</depend>
++  <depend>rclcpp_components</depend>
+   <depend>roslaunch</depend>
+   <depend>nodelet</depend>
+   <depend>std_msgs</depend>
+diff --git a/src/nodes/obstacle_extractor_node.cpp b/src/nodes/obstacle_extractor_node.cpp
+index 6b56435..8f497e1 100644
+--- a/src/nodes/obstacle_extractor_node.cpp
++++ b/src/nodes/obstacle_extractor_node.cpp
+@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
+ 
+   try {
+     RCLCPP_INFO(extractor_node->get_logger(), "[Obstacle Extractor]: Initializing node");
+-    ObstacleExtractor od(extractor_node, extractor_node);
++    ObstacleExtractor od(extractor_node.get(), extractor_node.get());
+     rclcpp::spin(extractor_node);
+     // ros::spin();
+   }
+diff --git a/src/nodes/obstacle_tracker_node.cpp b/src/nodes/obstacle_tracker_node.cpp
+index c426d2b..6463bac 100644
+--- a/src/nodes/obstacle_tracker_node.cpp
++++ b/src/nodes/obstacle_tracker_node.cpp
+@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
+   auto tracker_node = rclcpp::Node::make_shared("obstacle_tracker");
+   try {
+     RCLCPP_INFO(tracker_node->get_logger(), "[Obstacle Tracker]: Initializing node");
+-    ObstacleTracker ot(tracker_node, tracker_node);
++    ObstacleTracker ot(tracker_node.get(), tracker_node.get());
+     rclcpp::spin(tracker_node);
+   }
+   catch (const char* s) {
+diff --git a/src/obstacle_extractor.cpp b/src/obstacle_extractor.cpp
+index c6e34cd..7410f59 100644
+--- a/src/obstacle_extractor.cpp
++++ b/src/obstacle_extractor.cpp
+@@ -40,7 +40,7 @@
+ using namespace std;
+ using namespace obstacle_detector;
+ 
+-ObstacleExtractor::ObstacleExtractor(std::shared_ptr<rclcpp::Node> nh, std::shared_ptr<rclcpp::Node> nh_local){
++ObstacleExtractor::ObstacleExtractor(rclcpp::Node* nh, rclcpp::Node* nh_local){
+   nh_ = nh;
+   nh_local_ = nh_local;
+   p_active_ = false;
+@@ -117,8 +117,10 @@ void ObstacleExtractor::updateParamsUtil(){
+     if (p_active_) {
+       if (p_use_scan_){
+         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using LaserScan topic");
++        // Sensor-data QoS: laser drivers / projection nodes publish best-effort;
++        // a reliable subscription would never match them.
+         scan_sub_ = nh_->create_subscription<sensor_msgs::msg::LaserScan>(
+-            "scan", 10, std::bind(&ObstacleExtractor::scanCallback, this, std::placeholders::_1));
++            "scan", rclcpp::SensorDataQoS(), std::bind(&ObstacleExtractor::scanCallback, this, std::placeholders::_1));
+       }else if (p_use_pcl_){
+         RCLCPP_INFO_STREAM_ONCE(nh_->get_logger(), "Using PointCloud1 topic");
+         pcl_sub_ = nh_->create_subscription<sensor_msgs::msg::PointCloud>(
+@@ -128,7 +130,7 @@ void ObstacleExtractor::updateParamsUtil(){
+         pcl2_sub_ = nh_->create_subscription<sensor_msgs::msg::PointCloud2>(
+             "pcl2", 10, std::bind(&ObstacleExtractor::pcl2Callback, this, std::placeholders::_1));
+       }
+-      obstacles_pub_ = nh_->create_publisher<obstacle_detector::msg::Obstacles>("raw_obstacles", 10);
++      obstacles_pub_ = nh_->create_publisher<obstacle_detector::msg::Obstacles>("raw_obstacles", rclcpp::QoS(5));
+       obstacles_vis_pub_ = nh_->create_publisher<visualization_msgs::msg::MarkerArray>("raw_obstacles_visualization", 10);
+     }
+     else {
+@@ -226,13 +228,21 @@ void ObstacleExtractor::processPoints() {
+ void ObstacleExtractor::groupPoints() {
+   static double sin_dp = sin(2.0 * p_distance_proportion_);
+ 
++  if (input_points_.size() < 2)
++    return;
++
+   PointSet point_set;
+   point_set.begin = input_points_.begin();
+   point_set.end = input_points_.begin();
+   point_set.num_points = 1;
+   point_set.is_visible = true;
+ 
+-  for (PointIterator point = input_points_.begin()++; point != input_points_.end(); ++point) {
++  // Start at the SECOND point: `begin()++` post-increments a temporary and
++  // effectively starts at begin(), double-counting the first point. That
++  // inflates the first group's num_points by one, which makes fitSegment
++  // read one point past the group (its point count is trusted downstream) —
++  // a single foreign near-range point then corrupts the whole line fit.
++  for (PointIterator point = std::next(input_points_.begin()); point != input_points_.end(); ++point) {
+     double range = (*point).getRange();
+     double distance = (*point - *point_set.end).length();
+ 
+@@ -538,8 +548,11 @@ void ObstacleExtractor::transformObstacles() {
+     if (p_frame_id_[0] == '/') p_frame_id_.erase(0, 1);
+ 
+     try {
+-        m_transform = tf_buffer_->lookupTransform(p_frame_id_, base_frame_id_, tf2::TimePointZero);
+-    } 
++        // Look up at the scan stamp (not latest): output must be consistent
++        // with the pose at measurement time, and replay must be deterministic.
++        m_transform = tf_buffer_->lookupTransform(p_frame_id_, base_frame_id_, stamp_,
++                                                  rclcpp::Duration::from_seconds(0.1));
++    }
+     catch (const tf2::TransformException & ex) {
+         RCLCPP_INFO(
+         nh_->get_logger(), "Could not transformmm %s to %s: %s",
+diff --git a/src/obstacle_extractor_component.cpp b/src/obstacle_extractor_component.cpp
+new file mode 100644
+index 0000000..b3aa7f9
+--- /dev/null
++++ b/src/obstacle_extractor_component.cpp
+@@ -0,0 +1,30 @@
++/*
++ * Composable-node wrapper for ObstacleExtractor so it can be loaded into a
++ * component container (with intra-process comms) instead of running as a
++ * standalone process.
++ */
++
++#include "rclcpp/rclcpp.hpp"
++#include "rclcpp_components/register_node_macro.hpp"
++
++#include "obstacle_detector/obstacle_extractor.h"
++
++namespace obstacle_detector
++{
++
++class ObstacleExtractorComponent : public rclcpp::Node
++{
++public:
++  explicit ObstacleExtractorComponent(const rclcpp::NodeOptions & options)
++  : rclcpp::Node("obstacle_extractor", options)
++  {
++    impl_ = std::make_unique<ObstacleExtractor>(this, this);
++  }
++
++private:
++  std::unique_ptr<ObstacleExtractor> impl_;
++};
++
++}  // namespace obstacle_detector
++
++RCLCPP_COMPONENTS_REGISTER_NODE(obstacle_detector::ObstacleExtractorComponent)
+diff --git a/src/obstacle_tracker.cpp b/src/obstacle_tracker.cpp
+index fe80173..0af8491 100644
+--- a/src/obstacle_tracker.cpp
++++ b/src/obstacle_tracker.cpp
+@@ -40,7 +40,7 @@ using namespace obstacle_detector;
+ using namespace arma;
+ using namespace std;
+ 
+-ObstacleTracker::ObstacleTracker(std::shared_ptr<rclcpp::Node> nh, std::shared_ptr<rclcpp::Node> nh_local){
++ObstacleTracker::ObstacleTracker(rclcpp::Node* nh, rclcpp::Node* nh_local){
+   nh_ = nh;
+   nh_local_ = nh_local;
+   p_active_ = false;
+@@ -112,7 +112,7 @@ void ObstacleTracker::updateParamsUtil(){
+       }
+       obstacles_sub_ = nh_->create_subscription<obstacle_detector::msg::Obstacles>(
+             "raw_obstacles", 10, std::bind(&ObstacleTracker::obstaclesCallback, this, std::placeholders::_1));
+-      obstacles_pub_ = nh_->create_publisher<obstacle_detector::msg::Obstacles>("tracked_obstacles", 10);
++      obstacles_pub_ = nh_->create_publisher<obstacle_detector::msg::Obstacles>("tracked_obstacles", rclcpp::QoS(5));
+       obstacles_vis_pub_ = nh_->create_publisher<visualization_msgs::msg::MarkerArray>("tracked_obstacles_visualization", 10);
+     }
+     else {
+diff --git a/src/obstacle_tracker_component.cpp b/src/obstacle_tracker_component.cpp
+new file mode 100644
+index 0000000..e0573d5
+--- /dev/null
++++ b/src/obstacle_tracker_component.cpp
+@@ -0,0 +1,30 @@
++/*
++ * Composable-node wrapper for ObstacleTracker so it can be loaded into a
++ * component container (with intra-process comms) instead of running as a
++ * standalone process.
++ */
++
++#include "rclcpp/rclcpp.hpp"
++#include "rclcpp_components/register_node_macro.hpp"
++
++#include "obstacle_detector/obstacle_tracker.h"
++
++namespace obstacle_detector
++{
++
++class ObstacleTrackerComponent : public rclcpp::Node
++{
++public:
++  explicit ObstacleTrackerComponent(const rclcpp::NodeOptions & options)
++  : rclcpp::Node("obstacle_tracker", options)
++  {
++    impl_ = std::make_unique<ObstacleTracker>(this, this);
++  }
++
++private:
++  std::unique_ptr<ObstacleTracker> impl_;
++};
++
++}  // namespace obstacle_detector
++
++RCLCPP_COMPONENTS_REGISTER_NODE(obstacle_detector::ObstacleTrackerComponent)

@@ -1,0 +1,27 @@
+diff --git a/perception/autoware_multi_object_tracker/lib/tracker/trackers/polygon_tracker.cpp b/perception/autoware_multi_object_tracker/lib/tracker/trackers/polygon_tracker.cpp
+index 791b628..9a36aca 100644
+--- a/perception/autoware_multi_object_tracker/lib/tracker/trackers/polygon_tracker.cpp
++++ b/perception/autoware_multi_object_tracker/lib/tracker/trackers/polygon_tracker.cpp
+@@ -41,10 +41,18 @@ PolygonTracker::PolygonTracker(
+   if (enable_velocity_estimation_) {
+     // Set motion model parameters
+     {
+-      constexpr double q_stddev_x = 1.5;         // [m/s]
+-      constexpr double q_stddev_y = 1.5;         // [m/s]
+-      constexpr double q_stddev_vx = 9.8 * 0.5;  // [m/(s*s)]
+-      constexpr double q_stddev_vy = 9.8 * 0.5;  // [m/(s*s)]
++      // G1 domain tuning (fork patch 0019): upstream's 1.5 m/s position
++      // random-walk and 0.5 g acceleration noise are vehicle-scale; they put
++      // a ~0.93 m/s std-dev floor under the velocity estimate regardless of
++      // measurement noise, and suppressUncertainVelocity() then zeroes every
++      // published twist below ~2x that bound - i.e. every pedestrian-speed
++      // obstacle this robot meets. Indoor obstacles accelerate at <= ~1
++      // m/s^2, and a small position random-walk forces position innovations
++      // to be explained by velocity instead of leaking into position noise.
++      constexpr double q_stddev_x = 0.3;   // [m/s]      (upstream: 1.5)
++      constexpr double q_stddev_y = 0.3;   // [m/s]      (upstream: 1.5)
++      constexpr double q_stddev_vx = 1.0;  // [m/(s*s)]  (upstream: 9.8*0.5)
++      constexpr double q_stddev_vy = 1.0;  // [m/(s*s)]  (upstream: 9.8*0.5)
+       motion_model_.setMotionParams(q_stddev_x, q_stddev_y, q_stddev_vx, q_stddev_vy);
+     }
+ 

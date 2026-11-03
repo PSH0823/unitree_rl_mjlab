@@ -1,0 +1,147 @@
+diff --git a/simulate/CMakeLists.txt b/simulate/CMakeLists.txt
+index 83ec3be..3d7dfbe 100644
+--- a/simulate/CMakeLists.txt
++++ b/simulate/CMakeLists.txt
+@@ -51,6 +51,8 @@ link_libraries(
+ )
+ 
+ add_executable(unitree_mujoco ${SIM_SRC} src/main.cc)
++target_include_directories(unitree_mujoco PRIVATE
++  /home/dyros/unitree_rl_mjlab_/ros2/src/g1_perception/dpcbf_ros_adapter/include)
+ target_link_libraries(unitree_mujoco PRIVATE
+   dpcbf_dynamic_obstacles
+   dpcbf_safety_filter
+diff --git a/simulate/src/main.cc b/simulate/src/main.cc
+index f71269a..55bc85e 100755
+--- a/simulate/src/main.cc
++++ b/simulate/src/main.cc
+@@ -40,6 +40,10 @@
+ #include "dpcbf/dynamic_obstacles.h"
+ #include "dpcbf/dpcbf_safety_filter.h"
+ #include "dpcbf/dpcbf_visualizer.h"
++#include "dpcbf_ros_adapter/filter_io_log.h"  // T1 capture instrumentation
++#include <fstream>
++#include <sstream>
++#include <vector>
+ #ifdef UNITREE_MUJOCO_WITH_ROS2
+ #include "ros2_bridge.h"
+ #endif
+@@ -609,6 +613,44 @@ namespace
+       } // release std::lock_guard<std::mutex>
+     }
+   }
++  // T1 baseline instrumentation: scripted axis profile (env
++  // UNITREE_MUJOCO_SCRIPTED_COMMANDS) — identical class to the refactored
++  // tree's, so both binaries replay the same sim-time command profile.
++  class ScriptedJoystick : public unitree::common::UnitreeJoystick
++  {
++  public:
++    ScriptedJoystick(const std::string& profile_path,
++                     JoystickAxisFilter axis_filter)
++        : axis_filter_(std::move(axis_filter))
++    {
++      std::ifstream in(profile_path);
++      if (!in) { std::cerr << "ScriptedJoystick: cannot open profile " << profile_path << std::endl; exit(1); }
++      std::string line;
++      while (std::getline(in, line))
++      {
++        if (line.empty() || line[0] == '#') continue;
++        std::istringstream ss(line);
++        Point pt{};
++        if (ss >> pt.t >> pt.lx >> pt.ly >> pt.rx) points_.push_back(pt);
++      }
++      std::cout << "ScriptedJoystick: " << points_.size() << " breakpoints from " << profile_path << std::endl;
++      if (axis_filter_) { lx.smooth = 1.0f; ly.smooth = 1.0f; rx.smooth = 1.0f; }
++    }
++    void update() override
++    {
++      const double t = d ? d->time : 0.0;
++      std::array<float, 3> axes{0.0f, 0.0f, 0.0f};
++      for (const auto& pt : points_) { if (pt.t > t) break; axes = {pt.lx, pt.ly, pt.rx}; }
++      if (axis_filter_) axes = axis_filter_(axes[0], axes[1], axes[2]);
++      lx(axes[0]); ly(axes[1]); rx(axes[2]); ry(0.0f);
++    }
++  private:
++    struct Point { double t; float lx, ly, rx; };
++    std::vector<Point> points_;
++    JoystickAxisFilter axis_filter_;
++  };
++
++  std::unique_ptr<dpcbf_ros_adapter::FilterIoWriter> filter_io_log;
+ } // namespace
+ 
+ //-------------------------------------- physics_thread --------------------------------------------
+@@ -695,6 +737,12 @@ void *UnitreeSdk2BridgeThread(void *arg)
+     return nullptr;
+   }
+ 
++  if (const char* log_path = std::getenv("UNITREE_DPCBF_FILTER_LOG")) {
++    filter_io_log = std::make_unique<dpcbf_ros_adapter::FilterIoWriter>(
++        log_path, m->opt.timestep, 99u /* baseline capture */);
++    std::cout << "Filter I/O capture -> " << log_path << std::endl;
++  }
++
+   JoystickAxisFilter axis_filter = [dpcbf_body_id](float lx, float ly, float rx) {
+     dpcbf::VelocityCommand desired;
+     desired.sagittal = AxisToCommand(ly, safety_filter.sagittal_velocity_min(),
+@@ -717,7 +765,7 @@ void *UnitreeSdk2BridgeThread(void *arg)
+     const dpcbf::RobotState robot = ReadRobotGroundTruth(m, d, dpcbf_body_id);
+     const auto filtered = safety_filter.Filter(robot, desired, obstacle_states);
+     dpcbf_visualizer.Update(robot, obstacle_states, filtered);
+-    return std::array<float, 3>{
++    std::array<float, 3> axes{
+         -CommandToAxis(filtered.command.lateral,
+                        safety_filter.lateral_velocity_min(),
+                        safety_filter.lateral_velocity_max()),
+@@ -727,6 +775,33 @@ void *UnitreeSdk2BridgeThread(void *arg)
+         -CommandToAxis(filtered.command.yaw_rate,
+                        safety_filter.yaw_rate_min(),
+                        safety_filter.yaw_rate_max())};
++    if (filter_io_log && filter_io_log->enabled()) {
++      dpcbf_ros_adapter::FilterIoPrefix prefix{};
++      prefix.t = d->time;
++      prefix.lx = lx; prefix.ly = ly; prefix.rx = rx;
++      prefix.robot[0] = robot.x; prefix.robot[1] = robot.y;
++      prefix.robot[2] = robot.phi;
++      prefix.robot[3] = robot.sagittal_velocity;
++      prefix.robot[4] = robot.lateral_velocity;
++      prefix.desired[0] = desired.sagittal;
++      prefix.desired[1] = desired.lateral;
++      prefix.desired[2] = desired.yaw_rate;
++      prefix.command_scale = 1.0;
++      prefix.age_s = 0.0;
++      prefix.staleness_state = 0;
++      dpcbf_ros_adapter::FilterIoSuffix suffix{};
++      suffix.out_command[0] = filtered.command.sagittal;
++      suffix.out_command[1] = filtered.command.lateral;
++      suffix.out_command[2] = filtered.command.yaw_rate;
++      for (int i = 0; i < 3; ++i) suffix.acceleration[i] = filtered.acceleration[i];
++      suffix.active_constraints = filtered.active_constraints;
++      suffix.active_dpcbf_constraints = filtered.active_dpcbf_constraints;
++      suffix.active_ecbf_constraints = filtered.active_ecbf_constraints;
++      suffix.solved = filtered.solved ? 1 : 0;
++      for (int i = 0; i < 3; ++i) suffix.out_axes[i] = axes[i];
++      filter_io_log->Append(prefix, obstacle_states, suffix);
++    }
++    return axes;
+   };
+   
+   std::unique_ptr<UnitreeSDK2BridgeBase> interface = nullptr;
+@@ -735,6 +810,17 @@ void *UnitreeSdk2BridgeThread(void *arg)
+   } else {
+     interface = std::make_unique<Go2Bridge>(m, d, axis_filter);
+   }
++  std::shared_ptr<ScriptedJoystick> scripted_joystick;
++  if (const char* profile = std::getenv("UNITREE_MUJOCO_SCRIPTED_COMMANDS")) {
++    scripted_joystick = std::make_shared<ScriptedJoystick>(profile, axis_filter);
++    if (auto* g1 = dynamic_cast<G1Bridge*>(interface.get())) {
++      g1->lowstate->joystick = scripted_joystick;
++      g1->wireless_controller->joystick = scripted_joystick;
++    } else if (auto* go2 = dynamic_cast<Go2Bridge*>(interface.get())) {
++      go2->lowstate->joystick = scripted_joystick;
++      go2->wireless_controller->joystick = scripted_joystick;
++    }
++  }
+   interface->start();
+ 
+ #ifdef UNITREE_MUJOCO_WITH_ROS2

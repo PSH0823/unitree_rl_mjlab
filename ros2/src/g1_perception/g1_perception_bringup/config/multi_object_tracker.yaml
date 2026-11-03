@@ -1,0 +1,94 @@
+# autoware_multi_object_tracker node settings for the 3D pipeline (Humble
+# only). Started from the upstream default
+# (autoware_multi_object_tracker/config/multi_object_tracker_node.param.yaml,
+# tag 0.52.1) with these deliberate changes:
+#   world_frame_id map→odom  — this stack's fixed frame is odom (§7.1); there
+#                              is no map frame in the workspace.
+#   input/detection01/channel = lidar_clustering — the rule-based clustering
+#     channel profile (polar associator, extension/orientation not trusted)
+#     matches what cloud_object_detector produces. Channels 02-12 are "none";
+#     all 12 keys must be present (declare_parameter without a default).
+#   publish_merged_objects — declared without a default in code and NOT in the
+#     upstream node yaml (upstream injects it from launch xml); it must be here.
+# The input-channel catalog stays a verbatim upstream copy
+# (multi_object_tracker_input_channels.yaml). The association matrix
+# (multi_object_tracker_association.yaml) diverges deliberately: every
+# bounding_box and cylinder assignment row is create:"null" — the pipeline's
+# CONVEX-ONLY invariant (all outputs are POLYGON prisms; no box or cylinder
+# shape may ever be published; see that file's header).
+multi_object_tracker:
+  ros__parameters:
+    world_frame_id: odom
+    ego_frame_id: base_link
+
+    # publish per measurement (like the 2D P-2 tracker), not on a wall timer;
+    # publish_rate still bounds the output rate internally.
+    publish_on_timer: false
+    publish_rate: 10.0
+
+    # ego pose from TF (odom→base_link exists in both sim and hw); the
+    # ~/input/odometry subscription is then unused.
+    ego_source: tf
+    delay_compensation: none
+    consider_odometry_uncertainty: false
+
+    publish_merged_objects: false
+
+    input/detection01/channel: lidar_clustering
+    input/detection02/channel: none
+    input/detection03/channel: none
+    input/detection04/channel: none
+    input/detection05/channel: none
+    input/detection06/channel: none
+    input/detection07/channel: none
+    input/detection08/channel: none
+    input/detection09/channel: none
+    input/detection10/channel: none
+    input/detection11/channel: none
+    input/detection12/channel: none
+
+    tracker_configs:
+      polygon_tracker:
+        enable_velocity_estimation: true
+        enable_motion_output:
+          # Deliberate change from upstream (false): every obstacle this robot
+          # meets is UNKNOWN, and the whole point of the 3D pipeline is
+          # velocity on those tracks.
+          unknown:    true
+          car:        true
+          truck:      true
+          bus:        true
+          trailer:    true
+          motorcycle: true
+          bicycle:    true
+          pedestrian: true
+          animal:     true
+          hazard:     false
+      static_tracker:
+        convert_polygon_to_bbox: false
+
+    # pruning (upstream defaults)
+    min_known_object_removal_iou: 0.1
+    min_unknown_object_removal_iou: 0.001
+    pruning_generalized_iou_threshold: 0.1
+    pruning_distance_thresholds:
+      unknown: 9.0
+      car: 5.0
+      truck: 9.0
+      bus: 9.0
+      trailer: 9.0
+      motorcycle: 4.0
+      bicycle: 3.0
+      pedestrian: 2.0
+      animal: 2.0
+      hazard: 2.0
+
+    # debug (upstream defaults)
+    publish_processing_time: false
+    publish_processing_time_detail: false
+    publish_tentative_objects: false
+    publish_debug_markers: false
+    diagnostics_warn_delay: 0.5
+    diagnostics_error_delay: 1.0
+    diagnostics_warn_extrapolation: 0.5
+    diagnostics_error_extrapolation: 1.0

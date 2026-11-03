@@ -58,9 +58,9 @@ struct DpcbfVisualizationObstacle {
 
 struct SafetyFilterResult {
   VelocityCommand command;
-  // [normalized_delta_v_s, normalized_delta_v_l, yaw_rate]. The first two
-  // entries use the configured reference control frequency. The applied
-  // per-tick delta-v is value * reference_frequency_hz * control_dt.
+  // [delta_v_s_per_tick, delta_v_l_per_tick, yaw_rate]. The first two
+  // entries are added directly to the previous safe velocity command;
+  // control_dt is intentionally not applied.
   std::array<double, 3> acceleration{};
   int active_constraints = 0;
   int active_dpcbf_constraints = 0;
@@ -84,7 +84,8 @@ class DpcbfSafetyFilter {
   void Initialize(double control_dt);
   SafetyFilterResult Filter(const RobotState& robot,
                             const VelocityCommand& desired,
-                            const std::vector<ObstacleState>& obstacles);
+                            const std::vector<ObstacleState>& obstacles,
+                            const VelocityCommand& previous_command);
 
   DpcbfConstraint EvaluateConstraint(const RobotState& robot,
                                      const ObstacleState& obstacle) const;

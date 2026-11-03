@@ -20,19 +20,26 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(osqp-cpp)
 
-add_library(dpcbf_dynamic_obstacles STATIC
-  src/dynamic_obstacles.cpp
-)
+option(DPCBF_BUILD_DYNAMIC_OBSTACLES
+       "Build MuJoCo dynamic-obstacle and OpenCV visualization components" ON)
+
+if(DPCBF_BUILD_DYNAMIC_OBSTACLES)
+  add_library(dpcbf_dynamic_obstacles STATIC
+    src/dynamic_obstacles.cpp
+  )
+endif()
 
 add_library(dpcbf_safety_filter STATIC
+  src/constant_velocity_kalman.cpp
   src/dpcbf_safety_filter.cpp
 )
 
-target_include_directories(dpcbf_dynamic_obstacles
-  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_compile_features(dpcbf_dynamic_obstacles PUBLIC cxx_std_17)
+if(DPCBF_BUILD_DYNAMIC_OBSTACLES)
+  target_include_directories(dpcbf_dynamic_obstacles
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_compile_features(dpcbf_dynamic_obstacles PUBLIC cxx_std_17)
+endif()
 
 target_include_directories(dpcbf_safety_filter
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -48,7 +55,7 @@ target_compile_features(dpcbf_rollout_evaluator PRIVATE cxx_std_17)
 target_link_libraries(dpcbf_rollout_evaluator PRIVATE dpcbf_safety_filter yaml-cpp)
 
 find_package(OpenCV QUIET COMPONENTS core imgproc highgui)
-if(OpenCV_FOUND)
+if(DPCBF_BUILD_DYNAMIC_OBSTACLES AND OpenCV_FOUND)
   add_library(dpcbf_visualizer STATIC src/dpcbf_visualizer.cpp)
   target_include_directories(dpcbf_visualizer
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -63,9 +70,15 @@ endif()
 
 option(DPCBF_BUILD_TESTS "Build DPCBF numerical tests" ON)
 if(DPCBF_BUILD_TESTS)
+  add_executable(dpcbf_kalman_test tests/constant_velocity_kalman_test.cpp)
+  target_link_libraries(dpcbf_kalman_test PRIVATE dpcbf_safety_filter)
   add_executable(dpcbf_safety_filter_test tests/dpcbf_safety_filter_test.cpp)
   target_link_libraries(dpcbf_safety_filter_test PRIVATE dpcbf_safety_filter)
   enable_testing()
+  add_test(
+    NAME dpcbf_kalman_test
+    COMMAND dpcbf_kalman_test
+  )
   add_test(
     NAME dpcbf_safety_filter_test
     COMMAND dpcbf_safety_filter_test

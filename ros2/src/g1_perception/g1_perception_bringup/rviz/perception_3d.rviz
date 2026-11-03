@@ -1,0 +1,100 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Plane Cell Count: 24
+      Cell Size: 1
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Show Names: true
+      Marker Scale: 0.5
+    # ON by default here, unlike the 2-D layout: the whole point of the 3-D
+    # pipeline view is seeing the raw cloud carved into convex objects, and
+    # the default Orbit view does not stack the cloud over the markers.
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: LivoxCloud
+      Topic:
+        Value: /livox/lidar
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+      Use Fixed Frame: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: GTObstacles
+      Topic:
+        Value: /gt_obstacles_marker_relay/markers
+        Depth: 1
+    # THE geometry output: one convex polytope per track (translucent faces
+    # + edge wireframe, hue per track id, grey while coasting through an
+    # occlusion), world-frame velocity arrow (orange), short id.
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: TrackedConvex
+      Topic:
+        Value: /perception/tracked_convex_markers
+        Depth: 1
+    # The tracker's own 2.5D representation (one footprint extruded over the
+    # full height). OFF by default now that the polytope layer exists; turn
+    # on to see what the association actually reasons about.
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: Tracked2.5D
+      Topic:
+        Value: /perception/tracked_objects_markers
+        Depth: 1
+    - Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Name: Odom
+      Topic:
+        Value: /odom
+        Depth: 10
+      Keep: 12
+      Position Tolerance: 0.15
+      Angle Tolerance: 0.15
+      Shaft Length: 0.2
+      Head Length: 0.1
+  Global Options:
+    Fixed Frame: odom
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    # Opens in 3-D Orbit, unlike the 2-D layout: prisms and heights are the
+    # new information here. TopDown2D is kept as a saved entry for comparing
+    # footprints against the GT circles.
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Orbit3D
+      Distance: 14
+      Pitch: 0.6
+      Yaw: 3.4
+      Target Frame: base_link
+      Focal Point:
+        X: 2
+        Y: 0
+        Z: 0.5
+    Saved:
+      - Class: rviz_default_plugins/TopDownOrtho
+        Name: TopDown2D
+        Scale: 52
+        Angle: 0
+        Target Frame: base_link
+        X: 0
+        Y: 0
+Window Geometry:
+  Height: 900
+  Width: 1400

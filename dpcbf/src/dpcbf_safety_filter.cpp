@@ -77,7 +77,6 @@ struct DpcbfSafetyFilter::Impl {
   double alpha_2 = 1.0;
   double decay_weight = 1.0e6;
   double slack_weight = 1.0e6;
-  double reference_control_frequency_hz = 500.0;
   double velocity_increment_scale = 1.0;
   int obstacle_priority = 0;
   int max_constraints = 10;
@@ -190,7 +189,7 @@ struct DpcbfSafetyFilter::Impl {
   }
 
   std::pair<Eigen::VectorXd, Eigen::VectorXd> MakeBounds(
-      const RobotState& robot,
+      const VelocityCommand& previous_command,
       const std::vector<QpBarrierConstraint>& constraints) const {
     const double infinity = std::numeric_limits<double>::infinity();
     Eigen::VectorXd lower = Eigen::VectorXd::Zero(NumRows());
@@ -205,16 +204,16 @@ struct DpcbfSafetyFilter::Impl {
     lower[ControlBoundRowOffset() + 2] = yaw_rate_min;
     upper[ControlBoundRowOffset() + 2] = yaw_rate_max;
     lower[ControlBoundRowOffset() + 3] =
-        (sagittal_velocity_min - robot.sagittal_velocity) /
+        (sagittal_velocity_min - previous_command.sagittal) /
         velocity_increment_scale;
     upper[ControlBoundRowOffset() + 3] =
-        (sagittal_velocity_max - robot.sagittal_velocity) /
+        (sagittal_velocity_max - previous_command.sagittal) /
         velocity_increment_scale;
     lower[ControlBoundRowOffset() + 4] =
-        (lateral_velocity_min - robot.lateral_velocity) /
+        (lateral_velocity_min - previous_command.lateral) /
         velocity_increment_scale;
     upper[ControlBoundRowOffset() + 4] =
-        (lateral_velocity_max - robot.lateral_velocity) /
+        (lateral_velocity_max - previous_command.lateral) /
         velocity_increment_scale;
     for (int i = 0; i < DecayVariableCount(); ++i) {
       lower[DecayBoundRowOffset() + i] = 1.0;
@@ -274,8 +273,6 @@ void DpcbfSafetyFilter::LoadConfig(const std::filesystem::path& path) {
   }
   impl_->decay_weight = qp["decay_weight"].as<double>(1.0e6);
   impl_->slack_weight = qp["slack_weight"].as<double>(1.0e6);
-  impl_->reference_control_frequency_hz =
-      qp["reference_control_frequency_hz"].as<double>(500.0);
   impl_->obstacle_priority = qp["obstacle_priority"].as<int>(0);
   impl_->max_constraints = qp["default_num_constraints"].as<int>();
 
@@ -286,7 +283,6 @@ void DpcbfSafetyFilter::LoadConfig(const std::filesystem::path& path) {
       impl_->k_a_l < 0.0 || impl_->alpha <= 0.0 || impl_->max_constraints <= 0 ||
       impl_->alpha_1 <= 0.0 || impl_->alpha_2 <= 0.0 ||
       impl_->decay_weight <= 0.0 || impl_->slack_weight <= 0.0 ||
-      impl_->reference_control_frequency_hz <= 0.0 ||
       (impl_->obstacle_priority != 0 && impl_->obstacle_priority != 1) ||
       !ordered(impl_->sagittal_velocity_min, impl_->sagittal_velocity_max) ||
       !ordered(impl_->lateral_velocity_min, impl_->lateral_velocity_max) ||
@@ -304,8 +300,11 @@ void DpcbfSafetyFilter::Initialize(double control_dt) {
     throw std::runtime_error("DPCBF control dt must be positive and finite");
   }
   impl_->dt = control_dt;
-  impl_->velocity_increment_scale =
-      control_dt * impl_->reference_control_frequency_hz;
+  // a_s and a_l are per-control-tick velocity increments, not SI
+  // accelerations. Their integration therefore intentionally does not use
+  // control_dt: v_cmd_next = v_cmd_previous + a. Keep the same semantics at
+  // 50 Hz and 500 Hz, including in the velocity-bound rows below.
+  impl_->velocity_increment_scale = 1.0;
   if (!impl_->enabled ||
       (!impl_->dpcbf_enabled && !impl_->ecbf_enabled)) {
     impl_->initialized = true;
@@ -336,9 +335,9 @@ void DpcbfSafetyFilter::Initialize(double control_dt) {
         -2.0 * impl_->decay_weight;
   }
   instance.constraint_matrix = impl_->MakeConstraintMatrix({});
-  const RobotState zero_state;
+  const VelocityCommand zero_command;
   std::tie(instance.lower_bounds, instance.upper_bounds) =
-      impl_->MakeBounds(zero_state, {});
+      impl_->MakeBounds(zero_command, {});
 
   osqp::OsqpSettings settings;
   settings.verbose = false;
@@ -481,7 +480,8 @@ EcbfConstraint DpcbfSafetyFilter::EvaluateEcbfConstraint(
 
 SafetyFilterResult DpcbfSafetyFilter::Filter(
     const RobotState& robot, const VelocityCommand& desired,
-    const std::vector<ObstacleState>& obstacles) {
+    const std::vector<ObstacleState>& obstacles,
+    const VelocityCommand& previous_command) {
   if (!impl_->initialized) {
     throw std::runtime_error("DPCBF safety filter has not been initialized");
   }
@@ -639,10 +639,10 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
   }
 
   const double sagittal_reference = Clamp(
-      impl_->k_a_s * (desired.sagittal - robot.sagittal_velocity),
+      impl_->k_a_s * (desired.sagittal - previous_command.sagittal),
       impl_->sagittal_acceleration_min, impl_->sagittal_acceleration_max);
   const double lateral_reference = Clamp(
-      impl_->k_a_l * (desired.lateral - robot.lateral_velocity),
+      impl_->k_a_l * (desired.lateral - previous_command.lateral),
       impl_->lateral_acceleration_min, impl_->lateral_acceleration_max);
   const double yaw_reference = Clamp(desired.yaw_rate,
                                      impl_->yaw_rate_min, impl_->yaw_rate_max);
@@ -660,7 +660,7 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
   const auto matrix =
       impl_->MakeConstraintMatrix(qp_constraints);
   auto [lower, upper] =
-      impl_->MakeBounds(robot, qp_constraints);
+      impl_->MakeBounds(previous_command, qp_constraints);
   const absl::Status matrix_status = impl_->solver.UpdateConstraintMatrix(matrix);
   const absl::Status objective_status = impl_->solver.SetObjectiveVector(objective);
   const absl::Status bounds_status = impl_->solver.SetBounds(lower, upper);
@@ -704,11 +704,11 @@ SafetyFilterResult DpcbfSafetyFilter::Filter(
 
   result.acceleration = impl_->last_acceleration;
   result.command.sagittal = Clamp(
-      robot.sagittal_velocity +
+      previous_command.sagittal +
           result.acceleration[0] * impl_->velocity_increment_scale,
       impl_->sagittal_velocity_min, impl_->sagittal_velocity_max);
   result.command.lateral = Clamp(
-      robot.lateral_velocity +
+      previous_command.lateral +
           result.acceleration[1] * impl_->velocity_increment_scale,
       impl_->lateral_velocity_min, impl_->lateral_velocity_max);
   result.command.yaw_rate = Clamp(result.acceleration[2],

@@ -1,0 +1,16 @@
+# Projection stage (§9.4) — consumed in Phase 2. Appendix A verbatim.
+pointcloud_to_laserscan:
+  ros__parameters:
+    target_frame: ''           #e.g., base_link, torso_link
+    min_height: -0.25
+    max_height: 0.55
+    angle_min: -3.14159265
+    angle_max: 3.14159265
+    angle_increment: 0.0058    # ~0.33 deg, ~1080 bins
+    range_min: 0.3
+    range_max: 5.0
+    use_inf: true
+    inf_epsilon: 1.0
+    scan_time: 0.1
+    transform_tolerance: 0.05
+

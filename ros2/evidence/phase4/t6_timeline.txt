@@ -1,0 +1,24 @@
+state transitions (t_sim, state, age_s, scale, n_obs):
+  t=    0.818  NO_DATA  age=-1.000 scale=0.000 n_obs=0
+  t=   13.614  FRESH    age= 0.032 scale=1.000 n_obs=0
+  t=   68.388  DEGRADE  age= 0.300 scale=1.000 n_obs=11
+  t=   68.688  STOP     age= 0.600 scale=0.000 n_obs=11
+  t=   73.616  FRESH    age= 0.026 scale=1.000 n_obs=0
+  t=  113.794  DEGRADE  age= 0.302 scale=0.993 n_obs=14
+  t=  114.094  STOP     age= 0.602 scale=0.000 n_obs=14
+  t=  201.782  FRESH    age= 0.238 scale=1.000 n_obs=0
+  t=  201.844  DEGRADE  age= 0.300 scale=1.000 n_obs=0
+  t=  202.144  STOP     age= 0.600 scale=0.000 n_obs=0
+  t=  272.608  FRESH    age= 0.220 scale=1.000 n_obs=12
+  t=  272.630  STOP     age= 0.830 scale=0.000 n_obs=0
+recovery to FRESH at t=13.614 (prev state age -1.000s)
+degrade onset: age=0.3000s (gate: within one query of 0.300 → PASS)
+stop onset: age=0.6000s (gate: 0.600 → PASS)
+recovery to FRESH at t=73.616 (prev state age 0.600s)
+degrade onset: age=0.3020s (gate: within one query of 0.300 → PASS)
+stop onset: age=0.6020s (gate: 0.600 → PASS)
+recovery to FRESH at t=201.782 (prev state age 0.602s)
+degrade onset: age=0.3000s (gate: within one query of 0.300 → PASS)
+stop onset: age=0.6000s (gate: 0.600 → PASS)
+recovery to FRESH at t=272.608 (prev state age 0.600s)
+max age seen in STOP: 88.288s (retained-set inflation horizon caps at 1.0)

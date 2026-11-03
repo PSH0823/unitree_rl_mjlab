@@ -1,0 +1,449 @@
+diff --git a/include/obstacle_detector/obstacle_tracker.h b/include/obstacle_detector/obstacle_tracker.h
+index 295543a..4382712 100644
+--- a/include/obstacle_detector/obstacle_tracker.h
++++ b/include/obstacle_detector/obstacle_tracker.h
+@@ -64,7 +64,6 @@ public:
+ private:
+   void updateParamsUtil();
+   void updateParams(const std::shared_ptr<rmw_request_id_t> request_header, const std::shared_ptr<std_srvs::srv::Empty::Request> &req, const std::shared_ptr<std_srvs::srv::Empty::Response> &res);
+-  void timerCallback();
+   void obstaclesCallback(const obstacle_detector::msg::Obstacles::ConstSharedPtr& new_obstacles);
+   void obstaclesCallbackCircles(const obstacle_detector::msg::Obstacles::ConstSharedPtr& new_obstacles);
+   void obstaclesCallbackSegments(const obstacle_detector::msg::Obstacles::ConstSharedPtr& new_obstacles);
+@@ -93,7 +92,6 @@ private:
+   void fissureObstacle(const std::vector<int>& fission_indices, const std::vector<int>& row_min_indices,
+                        std::vector<TrackedSegmentObstacle>& new_tracked, const obstacle_detector::msg::Obstacles::ConstSharedPtr& new_obstacles);
+ 
+-  void updateObstacles();
+   void publishObstacles();
+   void publishVisualizationObstacles();
+   visualization_msgs::msg::Marker getMarkerBase(uid_t uid);
+@@ -110,7 +108,12 @@ private:
+   rclcpp::Publisher<obstacle_detector::msg::Obstacles>::SharedPtr obstacles_pub_;
+   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr obstacles_vis_pub_;
+   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr params_srv_;
+-  rclcpp::TimerBase::SharedPtr timer_;
++
++  // P-2: measurement-driven update — everything is clocked by the incoming
++  // raw_obstacles header stamps; there is no timer.
++  rclcpp::Time last_measurement_stamp_;
++  bool have_measurement_ = false;
++  double m_last_dt_ = 0.0;   // dt of the current measurement cycle
+ 
+   double radius_margin_;
+   obstacle_detector::msg::Obstacles obstacles_;
+@@ -131,6 +134,7 @@ private:
+   double p_sampling_time_;
+   double p_sensor_rate_;
+   double p_min_correspondence_cost_;
++  double p_radius_residual_weight_;
+   double p_std_correspondence_dev_;
+   double p_process_variance_;
+   double p_process_rate_variance_;
+diff --git a/include/obstacle_detector/utilities/tracked_circle_obstacle.h b/include/obstacle_detector/utilities/tracked_circle_obstacle.h
+index 06e20d9..8601354 100644
+--- a/include/obstacle_detector/utilities/tracked_circle_obstacle.h
++++ b/include/obstacle_detector/utilities/tracked_circle_obstacle.h
+@@ -54,6 +54,7 @@ public:
+   }
+ 
+   void predictState() {
++    applyTimestep();
+     kf_x_.predictState();
+     kf_y_.predictState();
+     kf_r_.predictState();
+@@ -113,6 +114,12 @@ public:
+     s_sampling_time_ = tp;
+   }
+ 
++  // Nominal measurement period; the covariance values are interpreted as
++  // per-step at this rate and scaled linearly with the actual dt (P-2).
++  static void setNominalDt(double dt) {
++    s_nominal_dt_ = dt;
++  }
++
+   static void setCounterSize(int size) {
+     s_fade_counter_size_ = size;
+   }
+@@ -131,6 +138,19 @@ public:
+   const KalmanFilter& getKFr() const { return kf_r_; }
+ 
+ private:
++  // P-2: measurement-driven updates arrive with variable dt (from header
++  // stamps); refresh the state-transition and process-noise terms before
++  // every prediction instead of freezing them at construction time.
++  void applyTimestep() {
++    const double scale =
++        (s_nominal_dt_ > 0.0) ? s_sampling_time_ / s_nominal_dt_ : 1.0;
++    for (KalmanFilter* kf : {&kf_x_, &kf_y_, &kf_r_}) {
++      kf->A(0, 1) = s_sampling_time_;
++      kf->Q(0, 0) = s_process_variance_ * scale;
++      kf->Q(1, 1) = s_process_rate_variance_ * scale;
++    }
++  }
++
+   void initKF() {
+     kf_x_.A(0, 1) = s_sampling_time_;
+     kf_y_.A(0, 1) = s_sampling_time_;
+@@ -165,6 +185,20 @@ private:
+ 
+     kf_x_.q_est(1) = obstacle_.velocity.x;
+     kf_y_.q_est(1) = obstacle_.velocity.y;
++
++    // P-2 two-point initiation covariance (Bar-Shalom): position known to
++    // one measurement, velocity to a two-measurement difference. Upstream's
++    // P = I neither matches the seed uncertainty nor the configured R, which
++    // made the filter ignore position innovations while the (noisy) seeded
++    // velocity converged.
++    if (s_sampling_time_ > 0.0) {
++      const double vel_var =
++          2.0 * s_measurement_variance_ / (s_sampling_time_ * s_sampling_time_);
++      for (KalmanFilter* kf : {&kf_x_, &kf_y_, &kf_r_}) {
++        kf->P(0, 0) = s_measurement_variance_;
++        kf->P(1, 1) = vel_var;
++      }
++    }
+   }
+ 
+   obstacle_detector::msg::CircleObstacle obstacle_;
+@@ -178,6 +212,7 @@ private:
+   // Common variables
+   static int s_fade_counter_size_;
+   static double s_sampling_time_;
++  static double s_nominal_dt_;
+   static double s_process_variance_;
+   static double s_process_rate_variance_;
+   static double s_measurement_variance_;
+diff --git a/include/obstacle_detector/utilities/tracked_segment_obstacle.h b/include/obstacle_detector/utilities/tracked_segment_obstacle.h
+index fd436e6..b8bd5ae 100644
+--- a/include/obstacle_detector/utilities/tracked_segment_obstacle.h
++++ b/include/obstacle_detector/utilities/tracked_segment_obstacle.h
+@@ -54,6 +54,7 @@ public:
+   }
+ 
+   void predictState() {
++    applyTimestep();
+     kf_x1_.predictState();
+     kf_y1_.predictState();
+     kf_x2_.predictState();
+@@ -124,6 +125,12 @@ public:
+     s_sampling_time_ = tp;
+   }
+ 
++  // Nominal measurement period; the covariance values are interpreted as
++  // per-step at this rate and scaled linearly with the actual dt (P-2).
++  static void setNominalDt(double dt) {
++    s_nominal_dt_ = dt;
++  }
++
+   static void setCounterSize(int size) {
+     s_fade_counter_size_ = size;
+   }
+@@ -143,6 +150,18 @@ public:
+   const KalmanFilter& getKFy2() const { return kf_y2_; }
+ 
+ private:
++  // P-2: refresh transition/process-noise terms for the actual dt before
++  // every prediction (see tracked_circle_obstacle.h).
++  void applyTimestep() {
++    const double scale =
++        (s_nominal_dt_ > 0.0) ? s_sampling_time_ / s_nominal_dt_ : 1.0;
++    for (KalmanFilter* kf : {&kf_x1_, &kf_y1_, &kf_x2_, &kf_y2_}) {
++      kf->A(0, 1) = s_sampling_time_;
++      kf->Q(0, 0) = s_process_variance_ * scale;
++      kf->Q(1, 1) = s_process_rate_variance_ * scale;
++    }
++  }
++
+   void initKF() {
+     kf_x1_.A(0, 1) = s_sampling_time_;
+     kf_y1_.A(0, 1) = s_sampling_time_;
+@@ -188,6 +207,16 @@ private:
+     kf_y1_.q_est(1) = obstacle_.first_velocity.y;
+     kf_x2_.q_est(1) = obstacle_.last_velocity.x;
+     kf_y2_.q_est(1) = obstacle_.last_velocity.y;
++
++    // P-2 two-point initiation covariance (see tracked_circle_obstacle.h).
++    if (s_sampling_time_ > 0.0) {
++      const double vel_var =
++          2.0 * s_measurement_variance_ / (s_sampling_time_ * s_sampling_time_);
++      for (KalmanFilter* kf : {&kf_x1_, &kf_y1_, &kf_x2_, &kf_y2_}) {
++        kf->P(0, 0) = s_measurement_variance_;
++        kf->P(1, 1) = vel_var;
++      }
++    }
+   }
+ 
+   obstacle_detector::msg::SegmentObstacle obstacle_;
+@@ -204,6 +233,7 @@ private:
+   static double s_sampling_time_;
+   static double s_process_variance_;
+   static double s_process_rate_variance_;
++  static double s_nominal_dt_;
+   static double s_measurement_variance_;
+ };
+ 
+diff --git a/src/obstacle_tracker.cpp b/src/obstacle_tracker.cpp
+index 0af8491..16bce31 100644
+--- a/src/obstacle_tracker.cpp
++++ b/src/obstacle_tracker.cpp
+@@ -44,16 +44,20 @@ ObstacleTracker::ObstacleTracker(rclcpp::Node* nh, rclcpp::Node* nh_local){
+   nh_ = nh;
+   nh_local_ = nh_local;
+   p_active_ = false;
+-//   params_srv_ = nh_->create_service<std_srvs::srv::Empty>("params", 
++//   params_srv_ = nh_->create_service<std_srvs::srv::Empty>("params",
+ //                                                           std::bind(
+ //                                                                 &ObstacleTracker::updateParams,
+-//                                                                 this, 
++//                                                                 this,
+ //                                                                 std::placeholders::_1,
+ //                                                                 std::placeholders::_2,
+ //                                                                 std::placeholders::_3
+ //                                                           ));
+ 
+-  timer_ = nh_->create_wall_timer(1000ms, std::bind(&ObstacleTracker::timerCallback, this));
++  // P-2: no timer — the tracker is measurement-driven (predict + correct on
++  // raw_obstacles arrival, dt from header stamps). The upstream timer model
++  // re-applied the last stale measurement between scans and stamped output
++  // with wall-derived now(), which biased velocities and broke replay
++  // determinism (H-6).
+   initialize();
+ }
+ 
+@@ -73,6 +77,7 @@ void ObstacleTracker::updateParamsUtil(){
+ 
+   nh_->declare_parameter("tracking_duration", rclcpp::PARAMETER_DOUBLE);
+   nh_->declare_parameter("min_correspondence_cost", rclcpp::PARAMETER_DOUBLE);
++  nh_->declare_parameter("radius_residual_weight", rclcpp::PARAMETER_DOUBLE);
+   nh_->declare_parameter("std_correspondence_dev", rclcpp::PARAMETER_DOUBLE);
+   nh_->declare_parameter("process_variance", rclcpp::PARAMETER_DOUBLE);
+   nh_->declare_parameter("process_rate_variance", rclcpp::PARAMETER_DOUBLE);
+@@ -87,23 +92,28 @@ void ObstacleTracker::updateParamsUtil(){
+ 
+   nh_->get_parameter_or("tracking_duration", p_tracking_duration_, 2.0);
+   nh_->get_parameter_or("min_correspondence_cost", p_min_correspondence_cost_, 0.3);
++  nh_->get_parameter_or("radius_residual_weight", p_radius_residual_weight_, 0.3);
+   nh_->get_parameter_or("std_correspondence_dev", p_std_correspondence_dev_, 0.15);
+   nh_->get_parameter_or("process_variance", p_process_variance_, 0.01);
+   nh_->get_parameter_or("process_rate_variance", p_process_rate_variance_, 0.1);
+   nh_->get_parameter_or("measurement_variance", p_measurement_variance_, 1.0);
+ 
+-  p_sampling_time_ = 1.0 / p_loop_rate_;
++  // P-2: everything is clocked by the sensor. The nominal sampling time is
++  // the measurement period; per-message dt (from header stamps) overrides it
++  // via setSamplingTime in obstaclesCallback. loop_rate is parsed for
++  // compatibility but no longer drives anything.
++  p_sampling_time_ = 1.0 / p_sensor_rate_;
+   obstacles_.header.frame_id = p_frame_id_;
+ 
+   TrackedCircleObstacle::setSamplingTime(p_sampling_time_);
+-  TrackedCircleObstacle::setCounterSize(static_cast<int>(p_loop_rate_ * p_tracking_duration_));
++  TrackedCircleObstacle::setNominalDt(p_sampling_time_);
++  TrackedCircleObstacle::setCounterSize(static_cast<int>(p_sensor_rate_ * p_tracking_duration_));
+   TrackedCircleObstacle::setCovariances(p_process_variance_, p_process_rate_variance_, p_measurement_variance_);
+   TrackedSegmentObstacle::setSamplingTime(p_sampling_time_);
+-  TrackedSegmentObstacle::setCounterSize(static_cast<int>(p_loop_rate_ * p_tracking_duration_));
++  TrackedSegmentObstacle::setNominalDt(p_sampling_time_);
++  TrackedSegmentObstacle::setCounterSize(static_cast<int>(p_sensor_rate_ * p_tracking_duration_));
+   TrackedSegmentObstacle::setCovariances(p_process_variance_, p_process_rate_variance_, p_measurement_variance_);
+ 
+-  timer_ = nh_->create_wall_timer(p_sampling_time_ * 1s, std::bind(&ObstacleTracker::timerCallback, this));
+-
+   if (p_active_ != prev_active) {
+     if (p_active_) {
+       if(p_compensate_robot_velocity_){
+@@ -136,20 +146,45 @@ void ObstacleTracker::updateParams(const std::shared_ptr<rmw_request_id_t> reque
+   updateParamsUtil();
+ }
+ 
+-void ObstacleTracker::timerCallback() {
+-  updateObstacles();
+-  publishObstacles();
+-  publishVisualizationObstacles();
+-}
+-
+ void ObstacleTracker::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr& msg)
+ {
+   odom_ = *msg;
+ }
+ 
+ void ObstacleTracker::obstaclesCallback(const obstacle_detector::msg::Obstacles::ConstSharedPtr& new_obstacles) {
++  // P-2 measurement-driven cycle: dt from header stamps, predict-only for
++  // every live track, then associate + correct, then prune faded tracks and
++  // publish with the measurement stamp (deterministic under replay).
++  rclcpp::Time stamp(new_obstacles->header.stamp);
++  double dt = p_sampling_time_;
++  if (have_measurement_) {
++    dt = (stamp - last_measurement_stamp_).seconds();
++    if (dt <= 0.0 || dt > p_tracking_duration_)
++      dt = p_sampling_time_;  // clock jump / replay restart: fall back to nominal
++  }
++  last_measurement_stamp_ = stamp;
++  have_measurement_ = true;
++
++  m_last_dt_ = dt;
++  TrackedCircleObstacle::setSamplingTime(dt);
++  TrackedSegmentObstacle::setSamplingTime(dt);
++  for (auto& t : tracked_circle_obstacles_)
++    t.predictState();
++  for (auto& t : tracked_segment_obstacles_)
++    t.predictState();
++
+   obstaclesCallbackCircles(new_obstacles);
+   obstaclesCallbackSegments(new_obstacles);
++
++  for (int i = 0; i < static_cast<int>(tracked_circle_obstacles_.size()); ++i)
++    if (tracked_circle_obstacles_[i].hasFaded())
++      tracked_circle_obstacles_.erase(tracked_circle_obstacles_.begin() + i--);
++  for (int i = 0; i < static_cast<int>(tracked_segment_obstacles_.size()); ++i)
++    if (tracked_segment_obstacles_[i].hasFaded())
++      tracked_segment_obstacles_.erase(tracked_segment_obstacles_.begin() + i--);
++
++  publishObstacles();
++  publishVisualizationObstacles();
+ }
+ 
+ void ObstacleTracker::obstaclesCallbackCircles(const obstacle_detector::msg::Obstacles::ConstSharedPtr& new_obstacles) {
+@@ -238,11 +273,18 @@ void ObstacleTracker::obstaclesCallbackCircles(const obstacle_detector::msg::Obs
+         tracked_circle_obstacles_[row_min_indices[n]].correctState(new_obstacles->circles[n]);
+       }
+       else if (row_min_indices[n] >= T) {
+-        TrackedCircleObstacle to(untracked_circle_obstacles_[row_min_indices[n] - T]);
++        // P-2 two-point track initiation: promotion has two measurements in
++        // hand (last frame's untracked one and this frame's), so seed the KF
++        // velocity from their difference instead of zero — initKF copies
++        // obstacle_.velocity into the state. A zero-velocity start makes the
++        // filter lag a fast crosser for many frames after confirmation.
++        obstacle_detector::msg::CircleObstacle seed = untracked_circle_obstacles_[row_min_indices[n] - T];
++        if (m_last_dt_ > 0.0) {
++          seed.velocity.x = (new_obstacles->circles[n].center.x - seed.center.x) / m_last_dt_;
++          seed.velocity.y = (new_obstacles->circles[n].center.y - seed.center.y) / m_last_dt_;
++        }
++        TrackedCircleObstacle to(seed);
+         to.correctState(new_obstacles->circles[n]);
+-        for (int i = 0; i < static_cast<int>(p_loop_rate_ / p_sensor_rate_); ++i)
+-          to.updateState();
+-
+         new_tracked_obstacles.push_back(to);
+       }
+ 
+@@ -346,11 +388,16 @@ void ObstacleTracker::obstaclesCallbackSegments(const obstacle_detector::msg::Ob
+         tracked_segment_obstacles_[row_min_indices[n]].correctState(new_obstacles->segments[n]);
+       }
+       else if (row_min_indices[n] >= T) {
+-        TrackedSegmentObstacle to(untracked_segment_obstacles_[row_min_indices[n] - T]);
++        // P-2 two-point initiation (see the circle branch).
++        obstacle_detector::msg::SegmentObstacle seed = untracked_segment_obstacles_[row_min_indices[n] - T];
++        if (m_last_dt_ > 0.0) {
++          seed.first_velocity.x = (new_obstacles->segments[n].first_point.x - seed.first_point.x) / m_last_dt_;
++          seed.first_velocity.y = (new_obstacles->segments[n].first_point.y - seed.first_point.y) / m_last_dt_;
++          seed.last_velocity.x = (new_obstacles->segments[n].last_point.x - seed.last_point.x) / m_last_dt_;
++          seed.last_velocity.y = (new_obstacles->segments[n].last_point.y - seed.last_point.y) / m_last_dt_;
++        }
++        TrackedSegmentObstacle to(seed);
+         to.correctState(new_obstacles->segments[n]);
+-        for (int i = 0; i < static_cast<int>(p_loop_rate_ / p_sensor_rate_); ++i)
+-          to.updateState();
+-
+         new_tracked_obstacles.push_back(to);
+       }
+ 
+@@ -390,7 +437,10 @@ double ObstacleTracker::obstacleCostFunction(const obstacle_detector::msg::Circl
+   relative_position(0) = new_center.x - old_center.x - tp * length(old_obstacle.velocity);
+   relative_position(1) = new_center.y - old_center.y;
+ 
+-  cost = sqrt(pow(new_obstacle.center.x - old_obstacle.center.x, 2.0) + pow(new_obstacle.center.y - old_obstacle.center.y, 2.0) + pow(new_obstacle.radius - old_obstacle.radius, 2.0));
++  // P-2: radius residual down-weighted (Appendix-A weight 0.3) — the radius
++  // estimate is far noisier than the center estimate and was causing missed
++  // associations at full weight.
++  cost = sqrt(pow(new_obstacle.center.x - old_obstacle.center.x, 2.0) + pow(new_obstacle.center.y - old_obstacle.center.y, 2.0) + pow(p_radius_residual_weight_ * (new_obstacle.radius - old_obstacle.radius), 2.0));
+ 
+   mat a = -0.5 * trans(relative_position) * distribution * relative_position;
+   penalty = exp(a(0, 0));
+@@ -594,9 +644,6 @@ void ObstacleTracker::fuseObstacles(const vector<int>& fusion_indices, const vec
+ 
+   TrackedCircleObstacle to(c);
+   to.correctState(new_obstacles->circles[col_min_indices[fusion_indices.front()]]);
+-  for (int i = 0; i < static_cast<int>(p_loop_rate_ / p_sensor_rate_); ++i)
+-    to.updateState();
+-
+   new_tracked.push_back(to);
+ }
+ 
+@@ -647,9 +694,6 @@ void ObstacleTracker::fuseObstacles(const vector<int>& fusion_indices, const vec
+ 
+   TrackedSegmentObstacle to(c);
+   to.correctState(new_obstacles->segments[col_min_indices[fusion_indices.front()]]);
+-  for (int i = 0; i < static_cast<int>(p_loop_rate_ / p_sensor_rate_); ++i)
+-    to.updateState();
+-
+   new_tracked.push_back(to);
+ }
+ 
+@@ -661,9 +705,6 @@ void ObstacleTracker::fissureObstacle(const vector<int>& fission_indices, const
+     // Ensure the fissured obstacle gets a new id
+     to.setNewUid();
+     to.correctState(new_obstacles->circles[idx]);
+-    for (int i = 0; i < static_cast<int>(p_loop_rate_ / p_sensor_rate_); ++i)
+-      to.updateState();
+-
+     new_tracked.push_back(to);
+   }
+ }
+@@ -676,29 +717,10 @@ void ObstacleTracker::fissureObstacle(const vector<int>& fission_indices, const
+     // Ensure the fissured obstacle gets a new id
+     to.setNewUid();
+     to.correctState(new_obstacles->segments[idx]);
+-    for (int i = 0; i < static_cast<int>(p_loop_rate_ / p_sensor_rate_); ++i)
+-      to.updateState();
+-
+     new_tracked.push_back(to);
+   }
+ }
+ 
+-void ObstacleTracker::updateObstacles() {
+-  for (int i = 0; i < tracked_circle_obstacles_.size(); ++i) {
+-    if (!tracked_circle_obstacles_[i].hasFaded())
+-      tracked_circle_obstacles_[i].updateState();
+-    else
+-      tracked_circle_obstacles_.erase(tracked_circle_obstacles_.begin() + i--);
+-  }
+-
+-  for (int i = 0; i < tracked_segment_obstacles_.size(); ++i) {
+-    if (!tracked_segment_obstacles_[i].hasFaded())
+-      tracked_segment_obstacles_[i].updateState();
+-    else
+-      tracked_segment_obstacles_.erase(tracked_segment_obstacles_.begin() + i--);
+-  }
+-}
+-
+ void ObstacleTracker::publishObstacles() {
+   auto obstacles_msg = obstacle_detector::msg::Obstacles();
+ 
+@@ -738,7 +760,10 @@ void ObstacleTracker::publishObstacles() {
+   }
+ 
+   obstacles_msg = obstacles_;
+-  obstacles_msg.header.stamp = nh_->get_clock()->now();
++  // P-2: stamp with the measurement time — downstream staleness logic and
++  // replay determinism both depend on it (never wall-derived now()).
++  obstacles_msg.header.stamp = have_measurement_
++      ? last_measurement_stamp_ : rclcpp::Time(nh_->get_clock()->now());
+ 
+   obstacles_pub_->publish(obstacles_msg);
+ }
+@@ -880,11 +905,13 @@ void ObstacleTracker::publishVisualizationObstacles() {
+ // Ugly initialization of static members of tracked obstacles...
+ int    TrackedCircleObstacle::s_fade_counter_size_     = 0;
+ double TrackedCircleObstacle::s_sampling_time_         = 100.0;
++double TrackedCircleObstacle::s_nominal_dt_            = 0.1;
+ double TrackedCircleObstacle::s_process_variance_      = 0.0;
+ double TrackedCircleObstacle::s_process_rate_variance_ = 0.0;
+ double TrackedCircleObstacle::s_measurement_variance_  = 0.0;
+ int    TrackedSegmentObstacle::s_fade_counter_size_     = 0;
+ double TrackedSegmentObstacle::s_sampling_time_         = 100.0;
++double TrackedSegmentObstacle::s_nominal_dt_            = 0.1;
+ double TrackedSegmentObstacle::s_process_variance_      = 0.0;
+ double TrackedSegmentObstacle::s_process_rate_variance_ = 0.0;
+ double TrackedSegmentObstacle::s_measurement_variance_  = 0.0;

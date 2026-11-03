@@ -1,0 +1,6 @@
+cloud->scan: n=600 p50=0.49ms p95=0.86ms p99=1.09ms max=1.83ms
+cloud->tracked: n=599 p50=1.09ms p95=1.58ms p99=1.90ms max=4.50ms
+cloud->safe: n=599 p50=1.28ms p95=1.76ms p99=2.19ms max=4.67ms
+container CPU: 4.5% of one core over 60s
+sidecar CPU: 29.9%
+frames: cloud=601 scan=600 tracked=600 safe=600

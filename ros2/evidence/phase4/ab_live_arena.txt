@@ -1,0 +1,13 @@
+oracle: ticks=69580 cmd-MSE=0.661208 perf=1/(1+MSE)=0.6020
+  degrade%=0.000 stop%=0.000 states={0: 69580}
+  active mean=6.65 max=10 unsolved=7198 n_obs/query=90.0
+estimated: ticks=69691 cmd-MSE=1.368264 perf=1/(1+MSE)=0.4223
+  degrade%=2.487 stop%=2.055 states={0: 67958, 1: 301, 2: 1432}
+  active mean=5.37 max=10 unsolved=16540 n_obs/query=11.6
+LIVE ARENA perf ratio est/orc = 0.7014 (gate >=0.95); MSE ratio orc/est = 0.4832
+decomposition: est MSE all=1.3683 (69691) fresh-only=1.3588 (67958)
+fresh-only perf ratio = 0.7043
+SESSION-ONLY (tail excluded):
+oracle:    ticks=66616 MSE=0.6097 active=6.60 unsolved=6381 states={0: 66616}
+estimated: ticks=66734 MSE=1.3474 active=5.41 unsolved=13871 states={0: 66734}
+perf ratio est/orc = 0.6857

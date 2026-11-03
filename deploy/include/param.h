@@ -43,6 +43,7 @@ inline std::filesystem::path bin_path;
 inline std::filesystem::path proj_dir;
 inline std::filesystem::path config_dir;
 inline YAML::Node config;
+inline bool is_simulation = false;
 
 inline std::filesystem::path get_bin_path() {
     std::vector<char> path(1024);

@@ -1,0 +1,112 @@
+# DLIO (feature/ros2 @ c8acc371 + patch 0006) parameters for the G1.
+#
+# This file REPLACES upstream's cfg/dlio.yaml + cfg/params.yaml; every value
+# they set is restated here so nothing depends on which upstream file wins.
+# Hardware-source specific — perception.launch.py never sees it (D4).
+#
+# Three upstream defaults are actively dangerous for this project and are
+# fixed below (each marked [FIX]):
+#   1. use_sim_time: true   — upstream ships it TRUE in cfg/params.yaml. On
+#      hardware there is no /clock, so a node with use_sim_time:=true never
+#      advances its clock and its wall timer never fires.
+#   2. frames/lidar: lidar  — DLIO publishes base_link -> <frames/lidar> and
+#      base_link -> <frames/imu> as TF. If either is named mid360_link it
+#      COLLIDES with robot_state_publisher's torso_link -> mid360_link and
+#      the frame gets two parents. They are given dlio_* names that exist
+#      nowhere else in the §8.2 tree.
+#   3. extrinsics/baselink2{lidar,imu} — identity upstream. DLIO has NO TF
+#      listener; these parameters are the ONLY thing that tells it where
+#      base_link is relative to the sensor. Left identity, odom -> base_link
+#      would really be odom -> mid360_link: off by 0.47 m in z and rotated by
+#      roll = pi. In sim the sidecar published GT odom -> base_link (pelvis)
+#      for free; on hardware this config is what buys the same frame.
+#
+# The extrinsics below are DERIVED from g1_description/urdf/g1_mid360.xacro
+# (the single source of truth, §8.3) composed with the Mid360's internal
+# lidar->IMU offset. t7_hw_extrinsic_guard.py recomputes them from the xacro
+# and fails if this file drifts. Do not hand-edit: edit the xacro.
+#
+#   baselink2lidar = (base_link->torso_link) o H-1(torso_link->mid360_link)
+#   baselink2imu   = baselink2lidar o (lidar->imu)
+#
+# lidar->imu = (0.011, 0.02329, -0.04412) m, identity rotation — Livox Mid-360
+# user-manual constant (the same number every Mid360 FAST-LIO config uses as
+# extrinsic_T = -(that), including deepglint/FAST_LIO_LOCALIZATION_HUMANOID's
+# G1 config). NOT verified against the unit on this robot: 5B checklist item.
+# It is a 5 cm lever arm — irrelevant stationary, small under sway.
+
+/**:
+  ros__parameters:
+
+    use_sim_time: false                    # [FIX] upstream ships true
+
+    version: 1.1.1
+    adaptive: true
+
+    pointcloud/deskew: true                # per-point deskew (§5.7)
+    pointcloud/voxelize: true
+
+    imu/calibration: true                  # estimates gyro+accel bias at boot
+    imu/intrinsics/accel/bias: [ 0.0, 0.0, 0.0 ]
+    imu/intrinsics/accel/sm:   [ 1.,  0.,  0.,
+                                 0.,  1.,  0.,
+                                 0.,  0.,  1. ]
+    imu/intrinsics/gyro/bias: [ 0.0, 0.0, 0.0 ]
+
+    # --- DERIVED, see header. base_link == MuJoCo pelvis (§8.1). ------------
+    extrinsics/baselink2imu/t: [ 0.0073593506587, -0.0232599998416, 0.5165441705330 ]
+    extrinsics/baselink2imu/R: [ 0.999999602168,  0.000000000003, -0.000891999882,
+                                 0.000000000000, -1.000000000000, -0.000000003590,
+                                -0.000891999882,  0.000000003590, -0.999999602168 ]
+    extrinsics/baselink2lidar/t: [ -0.0036800000000, 0.0000300000000, 0.4724340000000 ]
+    extrinsics/baselink2lidar/R: [ 0.999999602168,  0.000000000003, -0.000891999882,
+                                   0.000000000000, -1.000000000000, -0.000000003590,
+                                  -0.000891999882,  0.000000003590, -0.999999602168 ]
+
+    # --- frames (§8.1/§8.2) ------------------------------------------------
+    frames/odom: odom
+    frames/baselink: base_link
+    frames/lidar: dlio_lidar_link          # [FIX] must not be mid360_link
+    frames/imu: dlio_imu_link              # [FIX] must not collide either
+
+    map/waitUntilMove: true
+    map/dense/filtered: false
+    map/sparse/leafSize: 0.25
+
+    odom/gravity: 9.80665
+    odom/computeTimeOffset: true
+
+    odom/imu/approximateGravity: false
+    odom/imu/calibration/gyro: true
+    odom/imu/calibration/accel: true
+    odom/imu/calibration/time: 3.0         # robot MUST be still for this long
+    odom/imu/bufferSize: 5000
+
+    # Upstream default. NOTE it is a +-1.0 m cube around the LIDAR (applied to
+    # the raw scan before the extrinsic), so on the G1 it also removes the
+    # ground within 1 m. Odometry-only; the perception cloud is untouched.
+    # Tune from 5B self-hit data if DLIO struggles indoors.
+    odom/preprocessing/cropBoxFilter/size: 1.0
+    odom/preprocessing/voxelFilter/res: 0.25
+
+    odom/keyframe/threshD: 1.0
+    odom/keyframe/threshR: 45.0
+
+    odom/submap/keyframe/knn: 10
+    odom/submap/keyframe/kcv: 10
+    odom/submap/keyframe/kcc: 10
+    odom/gicp/minNumPoints: 64
+    odom/gicp/kCorrespondences: 16
+    odom/gicp/maxCorrespondenceDistance: 0.5
+    odom/gicp/maxIterations: 32
+    odom/gicp/transformationEpsilon: 0.01
+    odom/gicp/rotationEpsilon: 0.01
+    odom/gicp/initLambdaFactor: 1e-9
+
+    odom/geo/Kp: 4.5
+    odom/geo/Kv: 11.25
+    odom/geo/Kq: 4.0
+    odom/geo/Kab: 2.25
+    odom/geo/Kgb: 1.0
+    odom/geo/abias_max: 5.0
+    odom/geo/gbias_max: 0.5

@@ -486,7 +486,10 @@ RolloutMetrics RunRollout(const std::filesystem::path& config_path,
     const double time = static_cast<double>(step) * config.dt;
     const dpcbf::VelocityCommand desired =
         command_generator.Next(robot, time);
-    const auto result = filter.Filter(robot, desired, obstacles);
+    const dpcbf::VelocityCommand previous_command{
+        robot.sagittal_velocity, robot.lateral_velocity, 0.0};
+    const auto result =
+        filter.Filter(robot, desired, obstacles, previous_command);
     if (!result.solved) {
       metrics.qp_failure = true;
       break;
@@ -539,8 +542,8 @@ RolloutMetrics RunRollout(const std::filesystem::path& config_path,
         config.dt;
     robot.phi =
         WrapAngle(robot.phi + result.acceleration[2] * config.dt);
-    // The filter applies its reference-frequency scaling and velocity bounds
-    // when producing the command. Use that exact deployed command here.
+    // The filter applies its per-tick delta-v and velocity bounds when
+    // producing the command. Use that exact deployed command here.
     robot.sagittal_velocity = result.command.sagittal;
     robot.lateral_velocity = result.command.lateral;
     StepObstacles(config, obstacles);

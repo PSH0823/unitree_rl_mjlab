@@ -1,0 +1,27 @@
+diff --git a/src/obstacle_extractor.cpp b/src/obstacle_extractor.cpp
+index c6e34cd..ef73d84 100644
+--- a/src/obstacle_extractor.cpp
++++ b/src/obstacle_extractor.cpp
+@@ -226,13 +226,21 @@ void ObstacleExtractor::processPoints() {
+ void ObstacleExtractor::groupPoints() {
+   static double sin_dp = sin(2.0 * p_distance_proportion_);
+ 
++  if (input_points_.size() < 2)
++    return;
++
+   PointSet point_set;
+   point_set.begin = input_points_.begin();
+   point_set.end = input_points_.begin();
+   point_set.num_points = 1;
+   point_set.is_visible = true;
+ 
+-  for (PointIterator point = input_points_.begin()++; point != input_points_.end(); ++point) {
++  // Start at the SECOND point. `begin()++` post-increments a temporary, so the
++  // loop actually starts at begin() and the first point is counted twice: the
++  // first group's num_points is one too large, fitSegment() then reads one
++  // point past the group (num_points is trusted downstream), and a single
++  // foreign near-range point corrupts the whole line fit.
++  for (PointIterator point = std::next(input_points_.begin()); point != input_points_.end(); ++point) {
+     double range = (*point).getRange();
+     double distance = (*point - *point_set.end).length();
+ 

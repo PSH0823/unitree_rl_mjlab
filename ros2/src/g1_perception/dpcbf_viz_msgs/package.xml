@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>dpcbf_viz_msgs</name>
+  <version>0.1.0</version>
+  <description>
+    Visualization/diagnostics interface for the DPCBF control seam: the
+    compact per-tick sample the control-side plot bridge publishes for the
+    off-board plotting client (Computer 3). Carries ONLY data that exists
+    nowhere else on the graph (nominal/safe command, barrier values, the
+    obstacle set the QP actually consumed) — robot odometry and the
+    perception obstacle stream stay on /odom and /obstacles_safe and are NOT
+    duplicated here.
+  </description>
+  <maintainer email="joan0219@yonsei.ac.kr">Seohyeon Lim</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <depend>std_msgs</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

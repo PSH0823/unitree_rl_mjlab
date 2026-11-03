@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sim_mjlidar_bridge</name>
+  <version>0.1.0</version>
+  <description>
+    Mirror-state MuJoCo-LiDAR sidecar (§11.2): subscribes /sim/mj_state,
+    mirrors the compiled simulation model (poses only, mj_kinematics),
+    raycasts the Livox Mid360 rosette on the CPU backend at 10 Hz and
+    publishes /livox/lidar, ground-truth /odom and TF odom->base_link.
+    Runs on system Python 3.10 + rclpy (R-11).
+  </description>
+  <maintainer email="joan0219@yonsei.ac.kr">Seohyeon Lim</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros_py</depend>
+  <depend>sim_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

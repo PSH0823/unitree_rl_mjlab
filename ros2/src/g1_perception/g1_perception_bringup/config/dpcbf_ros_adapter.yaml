@@ -1,0 +1,29 @@
+# dpcbf_ros_adapter (§10.2/§10.3) — Appendix A verbatim.
+#
+# LOADED BY simulate/src/main.cc (LoadAdapterConfig, adapter_config.h) at
+# ObstacleSource construction: this file IS the control surface for the
+# staleness ladder and the subscription topic. It is parsed with yaml-cpp,
+# not as a ROS parameter file — hence no `ros__parameters` block — and every
+# key is required; a missing key fails the bridge thread loudly at startup.
+# (Before Phase 5C it was documentation only and the compiled-in defaults in
+# obstacle_buffer.h governed; those defaults still exist and must be kept
+# equal to this file for offline consumers that never load it, e.g. t1_replay
+# and the unit tests.)
+dpcbf_ros_adapter:
+  topic: /obstacles_safe
+  max_age: 0.30              # s
+  fade_out: 0.30             # s
+  hold_after_stale: 1.0      # s
+
+# Control-side plot bridge (dpcbf_ros_adapter::DpcbfVizPublisher): the
+# decimated per-tick DPCBF sample for the off-board plotting client
+# (Computer 3). Read by the SAME LoadVizBridgeConfig call site in main.cc at
+# startup; every key is required. `enabled: false` (or env
+# UNITREE_DPCBF_PLOT=0) removes the publisher entirely — the control seam
+# then makes no rclcpp calls beyond what it already made. Env
+# UNITREE_DPCBF_PLOT_RATE overrides rate_hz for one run without a rebuild.
+plot_bridge:
+  enabled: true
+  topic: /dpcbf/plot
+  rate_hz: 30.0              # plot samples/s (design band 20-50)
+  frame_id: odom

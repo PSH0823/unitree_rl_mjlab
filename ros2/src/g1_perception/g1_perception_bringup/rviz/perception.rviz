@@ -1,0 +1,124 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Plane Cell Count: 24
+      Cell Size: 1
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Show Names: true
+      Marker Scale: 0.5
+    # Present but OFF: in the top-down 2-D default the raw cloud covers the
+    # obstacle layers completely. Tick it on for projection/raycast debugging.
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: false
+      Name: LivoxCloud
+      Topic:
+        Value: /livox/lidar
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+      Use Fixed Frame: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: GTObstacles
+      Topic:
+        Value: /gt_obstacles_marker_relay/markers
+        Depth: 1
+    # Per-frame extractor output; off by default for the same reason.
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: RawObstacles (Phase 3)
+      Topic:
+        Value: /raw_obstacles_marker_relay/markers
+        Depth: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: TrackedObstacles (Phase 3)
+      Topic:
+        Value: /tracked_obstacles_marker_relay/markers
+        Depth: 1
+    # What DPCBF actually eats (§9.6 gated + inflated). viz.launch.py has
+    # published this relay since Phase 4; the layout never showed it, so the
+    # one stream with safety meaning was the one you could not see.
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: SafeObstacles (Phase 4)
+      Topic:
+        Value: /safe_obstacles_marker_relay/markers
+        Depth: 1
+    # §4.6. One MarkerArray carrying six namespaced groups: the workspace
+    # layers (gt / tracked / safe / error / unpaired_*), the selected set and
+    # the eCBF distance barriers — all honest metres in `odom` — plus the
+    # DPCBF h=0 parabolas, which are m/s and therefore live in their own
+    # `dpcbf_velocity_plane` frame. Toggle groups from the Namespaces subtree.
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: DPCBFOverlay (§4.6)
+      Topic:
+        Value: /dpcbf_overlay/markers
+        Depth: 1
+    - Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Name: Odom
+      Topic:
+        Value: /odom
+        Depth: 10
+      # 100 arrows is a readable 3-D trail and an unreadable 2-D one: under
+      # TopDownOrtho the trail fans across exactly the area the §4.6 layers
+      # occupy. Short trail keeps "is odometry moving" answerable.
+      Keep: 12
+      Position Tolerance: 0.15
+      Angle Tolerance: 0.15
+      Shaft Length: 0.2
+      Head Length: 0.1
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: false
+      Name: Scan (Phase 2)
+      Topic:
+        Value: /scan
+        Reliability Policy: Best Effort
+  Global Options:
+    Fixed Frame: odom
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    # Opens in top-down 2-D: that is the plane the filter reasons in, and the
+    # operator should not have to know TopDownOrtho exists. Under this view z
+    # no longer means height, it means DRAW ORDER — which is what makes the
+    # §4.6 layers legible stacked on the same obstacle. The Orbit view is
+    # kept as a saved entry so the 3-D displays stay usable.
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: TopDown2D
+      Scale: 52
+      Angle: 0
+      Target Frame: base_link
+      X: 0
+      Y: 0
+    Saved:
+      - Class: rviz_default_plugins/Orbit
+        Name: Orbit3D
+        Distance: 14
+        Pitch: 0.6
+        Yaw: 3.4
+        Focal Point:
+          X: 2
+          Y: 0
+          Z: 0.5
+Window Geometry:
+  Height: 900
+  Width: 1400

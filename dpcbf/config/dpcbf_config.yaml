@@ -1,17 +1,17 @@
 dynamic_obstacles:
   enabled: true
-  count: 90
+  count: 20
 
   # A radius and a constant speed are sampled once per obstacle at startup.
   radius_range: [0.2, 0.3]         # meters
-  speed_range: [0.0, 0.8]          # meters/second
+  speed_range: [0.0, 0.4]          # meters/second
   collision_enabled: true          # physical contact between robot and cylinders
   rgba: [0.1, 0.4, 1.0, 0.45]      # translucent blue
   height: 1.5                      # meters
   random_seed: 42                  # same value reproduces the same obstacle set
 
   arena:
-    size: [20.0, 20.0]             # width (x), depth (y), meters
+    size: [10.0, 10.0]             # width (x), depth (y), meters
     # G1 starts at (0, 0). With this center, the arena spans x=[1, 11]
     # and y=[-5, 5], so the robot starts 1 m outside the left boundary.
     center: [0.0, 0.0]
@@ -27,14 +27,14 @@ robot:
   p_max: 3.0                       # obstacle detection radius, meters
 
   # These match the velocity-command ranges used to train the selected policy.
-  v_s_max: 2.0
+  v_s_max: 1.0
   v_s_min: -1.0
   v_l_max: 1.0
   v_l_min: -1.0
   w_max: 1.0
   w_min: -1.0
 
-  a_s_max: 4.0
+  a_s_max: 2.0
   a_s_min: -2.0
   a_l_max: 2.0
   a_l_min: -2.0
@@ -44,20 +44,24 @@ robot:
 
 qp_parameters:
   enabled: true
+  # Keep the legacy in-simulator joystick filter disabled when g1_ctrl owns
+  # the QP, otherwise the same command would be filtered twice.
+  simulate_filter_enabled: false
 
+  # Per-tick command tracking gains. References are computed from
+  # desired_velocity - previous_safe_command, not measured robot velocity.
   k_a_s: 1.0
   k_a_l: 1.0
-  # a_s/a_l are normalized at 500 Hz. Applied delta-v is multiplied by
-  # reference_control_frequency_hz * actual control_dt.
-  reference_control_frequency_hz: 500.0
+  # a_s/a_l are per-control-tick velocity increments:
+  # v_cmd_next = v_cmd_previous + a. They are not multiplied by control_dt.
   alpha: 2.0       # 2.0
-  default_num_constraints: 10
+  default_num_constraints: 5
   # 0: nearest distance first
   # 1: highest relative-velocity closing alignment first, distance as tie-break
-  obstacle_priority: 1
+  obstacle_priority: 0
 
   # exponential CBF (eCBF) parameters for distance between robot and obstacles
-  ecbf_enabled: false
+  ecbf_enabled: true
   alpha_ecbf: 100.0
   # Optimal-Decay CBF (ODCBF) parameters
   odcbf_enabled: false
@@ -77,3 +81,53 @@ visualization:
   world_parabola_lateral_limit: 1.0   # +/- LoS lateral velocity shown on the world pane
   world_parabola_backward_limit: 1.5  # maximum -LoS velocity extent on the world pane
   world_margin: 1.0                   # meters around arena and p_max circle
+
+# Shared by hardware and simulation DpcbfVelocity. The control worker runs
+# QP -> low-level ONNX sequentially at the policy's 50 Hz.
+deployment:
+  odometry_topic: /odom
+  obstacle_topic: /obstacles_safe
+  expected_frame: odom
+  # Body-frame velocity commands published at the full 50 Hz control rate.
+  # Twist fields: linear.x=sagittal, linear.y=lateral, angular.z=yaw rate.
+  command_frame: base_link
+  nominal_command_topic: /dpcbf/nominal_velocity_command
+  safe_command_topic: /dpcbf/safe_velocity_command
+  odometry_timeout: 0.20
+  max_odometry_speed: 3.0
+
+  # Robot world velocity is estimated from odom position using the message
+  # header timestamp. The Kalman output (not the raw finite difference) is
+  # rotated to the body frame and used by DPCBF/eCBF.
+  velocity_estimator:
+    enable_kalman: true
+    position_measurement_std: 0.01       # m
+    # Filter model noise, not the robot command acceleration limit. A walking
+    # pelvis has fast within-step velocity changes; 48 tracks MuJoCo truth
+    # without the roughly 90 ms lag observed with the original value 2.
+    process_acceleration_std: 48.0       # m/s^2
+    initial_velocity_std: 0.5            # m/s
+    innovation_gate_sigma: 5.0
+    max_consecutive_rejections: 3
+    min_dt: 0.001                        # s
+    max_dt: 0.10                         # s; larger gaps reset the filter
+    raw_velocity_topic: /dpcbf/raw_robot_velocity
+    filtered_velocity_topic: /dpcbf/filtered_robot_velocity
+
+  # Suppress small neutral-position drift before mapping joystick axes to the
+  # asymmetric training velocity ranges. The remainder is rescaled to [0, 1].
+  joystick_deadzone: 0.08
+
+  # A fresh message with zero circles is valid. These timers apply only when
+  # the /obstacles_safe message itself stops arriving.
+  obstacle_max_age: 0.30
+  obstacle_fade_out: 0.30
+  obstacle_hold_after_stale: 1.0
+
+  # On an OSQP failure, hold the last safe command for this many 50 Hz ticks,
+  # then approach zero while the locomotion policy remains active.
+  qp_failure_hold_cycles: 1
+  fail_safe_linear_deceleration: 2.0  # m/s^2
+  fail_safe_yaw_deceleration: 2.0     # rad/s^2
+
+  plot_topic: /dpcbf/plot

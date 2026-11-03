@@ -47,7 +47,7 @@ dpcbf::SafetyFilterResult RunFeatureCombination(
   const dpcbf::VelocityCommand desired{0.3, 0.0, 0.0};
   const std::vector<dpcbf::ObstacleState> obstacles{
       {2.0, 0.4, 0.2, 0.0, 0.0, 7}};
-  const auto result = filter.Filter(robot, desired, obstacles);
+  const auto result = filter.Filter(robot, desired, obstacles, {});
   std::filesystem::remove(path);
   if (!result.solved) {
     throw std::runtime_error(
@@ -85,7 +85,7 @@ int SelectPriorityObstacle(const YAML::Node& source_config,
       {-0.5, 0.0, 0.1, 0.0, 0.0, 10},
       {2.0, 0.0, 0.1, 0.0, 0.0, 20},
   };
-  const auto result = filter.Filter(robot, desired, obstacles);
+  const auto result = filter.Filter(robot, desired, obstacles, {});
   std::filesystem::remove(path);
   if (result.selected_obstacles.size() != 1) {
     throw std::runtime_error("obstacle priority selection count mismatch");
@@ -188,44 +188,82 @@ int main(int argc, char** argv) {
                1.0e-12, "eCBF yaw coefficient");
 
     const dpcbf::RobotState stopped{};
-    const dpcbf::VelocityCommand desired{2.0, 1.0, 1.0};
-    const auto unconstrained = filter.Filter(stopped, desired, {});
+    const dpcbf::VelocityCommand desired{1.0, 1.0, 1.0};
+    const dpcbf::VelocityCommand previous_command{0.25, -0.20, 0.0};
+    const auto unconstrained =
+        filter.Filter(stopped, desired, {}, previous_command);
     if (!unconstrained.solved || unconstrained.active_constraints != 0) {
       throw std::runtime_error("unconstrained OSQP solve failed");
     }
     ExpectNear(unconstrained.command.sagittal,
-               unconstrained.acceleration[0] * dt * 500.0, 2.0e-5,
+               previous_command.sagittal + unconstrained.acceleration[0],
+               2.0e-5,
                "sagittal command integration");
     ExpectNear(unconstrained.command.lateral,
-               unconstrained.acceleration[1] * dt * 500.0, 2.0e-5,
+               previous_command.lateral + unconstrained.acceleration[1],
+               2.0e-5,
                "lateral command integration");
+    ExpectNear(unconstrained.command.sagittal, desired.sagittal, 2.0e-5,
+               "unconstrained sagittal desired-command tracking");
+    ExpectNear(unconstrained.command.lateral, desired.lateral, 2.0e-5,
+               "unconstrained lateral desired-command tracking");
     ExpectNear(unconstrained.command.yaw_rate, 1.0, 2.0e-4,
                "yaw command");
+
+    // The nominal QP increment must not integrate measured-velocity noise.
+    // With no barriers, changing only the measured robot velocity leaves the
+    // command-tracking result unchanged because its reference is based on the
+    // previous safe command.
+    auto noisy_velocity_state = stopped;
+    noisy_velocity_state.sagittal_velocity = -1.2;
+    noisy_velocity_state.lateral_velocity = 0.85;
+    const auto noisy_unconstrained = filter.Filter(
+        noisy_velocity_state, desired, {}, previous_command);
+    if (!noisy_unconstrained.solved) {
+      throw std::runtime_error("noisy-velocity unconstrained solve failed");
+    }
+    ExpectNear(noisy_unconstrained.command.sagittal, desired.sagittal,
+               2.0e-5, "measured-velocity-independent sagittal tracking");
+    ExpectNear(noisy_unconstrained.command.lateral, desired.lateral,
+               2.0e-5, "measured-velocity-independent lateral tracking");
+
+    const dpcbf::VelocityCommand stopped_desired{};
+    const auto return_to_zero =
+        filter.Filter(noisy_velocity_state, stopped_desired, {},
+                      previous_command);
+    if (!return_to_zero.solved) {
+      throw std::runtime_error("return-to-zero unconstrained solve failed");
+    }
+    ExpectNear(return_to_zero.command.sagittal, 0.0, 2.0e-5,
+               "unconstrained sagittal return to zero");
+    ExpectNear(return_to_zero.command.lateral, 0.0, 2.0e-5,
+               "unconstrained lateral return to zero");
 
     dpcbf::DpcbfSafetyFilter slower_filter;
     slower_filter.LoadConfig(std::filesystem::path(argv[1]));
     constexpr double slower_dt = 0.01;
     slower_filter.Initialize(slower_dt);
     const auto scaled_increment =
-        slower_filter.Filter(stopped, desired, {});
+        slower_filter.Filter(stopped, desired, {}, previous_command);
     if (!scaled_increment.solved) {
       throw std::runtime_error("scaled velocity-increment solve failed");
     }
     ExpectNear(
         scaled_increment.command.sagittal,
-        scaled_increment.acceleration[0] * slower_dt * 500.0, 2.0e-5,
-        "scaled sagittal command integration");
+        previous_command.sagittal + scaled_increment.acceleration[0], 2.0e-5,
+        "dt-independent sagittal command integration");
     ExpectNear(
         scaled_increment.command.lateral,
-        scaled_increment.acceleration[1] * slower_dt * 500.0, 2.0e-5,
-        "scaled lateral command integration");
+        previous_command.lateral + scaled_increment.acceleration[1], 2.0e-5,
+        "dt-independent lateral command integration");
 
     std::vector<dpcbf::ObstacleState> many_obstacles;
     for (int i = 0; i < 15; ++i) {
       many_obstacles.push_back(
           {1.0 + 0.1 * i, 0.5, 0.1, 0.0, 0.0, i});
     }
-    const auto constrained = filter.Filter(stopped, desired, many_obstacles);
+    const auto constrained =
+        filter.Filter(stopped, desired, many_obstacles, previous_command);
     if (!constrained.solved ||
         constrained.active_constraints != configured_max_constraints ||
         constrained.active_dpcbf_constraints !=

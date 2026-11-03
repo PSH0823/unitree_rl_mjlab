@@ -5,6 +5,7 @@
 #include "FSM/BaseState.h"
 #include "isaaclab/devices/keyboard/keyboard.h"
 #include "unitree_joystick_dsl.hpp"
+#include <set>
 
 class FSMState : public BaseState
 {
@@ -14,7 +15,21 @@ public:
     {
         spdlog::info("Initializing State_{} ...", state_string);
 
+        // Communication loss always wins over operator requests.
+        registered_checks.emplace_back(
+            std::make_pair(
+                []()->bool{ return lowstate->isTimeout(); },
+                FSMStringMap.right.at("Passive")
+            )
+        );
+
         auto transitions = param::config["FSM"][state_string]["transitions"];
+        const auto console = param::config["console_fsm_control"];
+        const bool console_enabled = console &&
+            console["enabled"].as<bool>(false) &&
+            (!console["simulation_only"].as<bool>(true) ||
+             param::is_simulation);
+        std::set<int> console_targets;
 
         if(transitions)
         {
@@ -41,16 +56,39 @@ public:
                         fsm_id
                     )
                 );
+
+                if (console_enabled && fsm_id >= 0 && fsm_id <= 9) {
+                    console_targets.insert(fsm_id);
+                    const std::string id_key = std::to_string(fsm_id);
+                    registered_checks.emplace_back(std::make_pair(
+                        [id_key]()->bool {
+                            return FSMState::keyboard &&
+                                   FSMState::keyboard->on_pressed &&
+                                   FSMState::keyboard->key() == id_key;
+                        },
+                        fsm_id));
+                }
             }
         }
-
-        // register for all states
-        registered_checks.emplace_back(
-            std::make_pair(
-                []()->bool{ return lowstate->isTimeout(); },
-                FSMStringMap.right.at("Passive")
-            )
-        );
+        if (console_enabled) {
+            registered_checks.emplace_back(std::make_pair(
+                [state_string, console_targets]()->bool {
+                    if (!FSMState::keyboard || !FSMState::keyboard->on_pressed) {
+                        return false;
+                    }
+                    const std::string key = FSMState::keyboard->key();
+                    if (key.size() != 1 || key[0] < '0' || key[0] > '9') {
+                        return false;
+                    }
+                    const int requested = key[0] - '0';
+                    if (!console_targets.count(requested)) {
+                        spdlog::warn(
+                            "FSM numeric request rejected: {} -> id {} is not a configured transition",
+                            state_string, requested);
+                    }
+                    return false;
+                }, 0));
+        }
     }
 
     void pre_run()

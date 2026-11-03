@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Computer 2 ONLY: sensor NIC + visualization NIC, with multicast blocked
+     on the visualization side. Multicast stays off globally (Cyclone's
+     AllowMulticast is not per-interface here); the sensor-side Computer 1
+     peer and the visualization-side Computer 3 peer are both listed.
+
+     Env vars:
+       G1_SENSOR_IFACE  NIC toward Computer 1
+       G1_VIZ_IFACE     NIC toward Computer 3
+       G1_SENSOR_PEER   Computer 1's IP on the sensor net
+       G1_VIZ_PEER      Computer 3's IP on the visualization net -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="${G1_SENSOR_IFACE}"/>
+        <NetworkInterface name="${G1_VIZ_IFACE}"/>
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>32</MaxAutoParticipantIndex>
+      <Peers>
+        <Peer address="${G1_SENSOR_PEER}"/>
+        <Peer address="${G1_VIZ_PEER}"/>
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

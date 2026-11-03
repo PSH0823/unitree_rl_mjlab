@@ -1,5 +1,9 @@
 # DPCBF safety filter
 
+Hardware installation for the G1 onboard PC and remote visualization computer
+is documented in
+[`deploy/robots/g1/config/policy/dpcbf_velocity/v1/SETUP.md`](../deploy/robots/g1/config/policy/dpcbf_velocity/v1/SETUP.md).
+
 This directory contains simulation-independent DPCBF and OSQP code plus the
 MuJoCo dynamic-obstacle manager. The simulator supplies ground-truth robot and
 obstacle states, while the core filter only depends on plain C++ state structs.
@@ -20,12 +24,22 @@ gamepad velocity request
 Robot position and yaw come from the configured floating-base body. Body-frame
 linear velocity comes from `mj_objectVelocity(..., flg_local=1)`.
 Dynamic-obstacle positions and velocities are copied directly from the mocap
-obstacle manager. The first two QP inputs are normalized velocity increments
-at `qp_parameters.reference_control_frequency_hz` (500 Hz by default). The
-applied update is
-`v_next = v + delta_v_normalized * reference_frequency * control_dt`.
-Consequently the scale is 1 at 0.002 s and 5 at 0.01 s. Position, yaw, and
-obstacle motion still use the real simulation timestep.
+obstacle manager. The first two QP inputs are per-control-tick velocity
+increments. The applied update is
+`velocity_command_next = velocity_command_previous + delta_v`; it uses the
+previous command rather than the measured robot velocity and intentionally
+does not multiply by `control_dt`. The nominal increment reference is
+`k_a * (desired_velocity - previous_safe_command)`, so odometry velocity noise
+is not integrated into the command. The measured velocity remains part of the
+DPCBF dynamics and relative-velocity calculation. Position, yaw, and obstacle
+motion still use the real simulation timestep.
+
+For the ROS deployment, robot world velocity is derived from consecutive odom
+positions using `message.header.stamp`, then optionally estimated by a 2-D
+constant-velocity Kalman filter. `deployment.velocity_estimator.enable_kalman`
+selects the Kalman output or the raw header-time finite difference. The raw
+and filtered body-frame velocities are published separately for bag-based
+tuning; only the selected filtered value enters DPCBF/eCBF.
 
 ## QP safety options
 

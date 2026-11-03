@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<!--
+  G1 + Mid360 TF description for the perception stack (§8).
+
+  Frames only - no meshes, no inertials. robot_state_publisher turns the two
+  fixed joints below into static TF. base_link is identical to the MuJoCo
+  `pelvis` floating base (§8.1).
+
+  base_link -> torso_link is a FIXED approximation at the nominal standing
+  waist pose (§8.3); the true transform moves with the three waist joints.
+  Values are the MJCF chain offsets at zero joint angles:
+  pelvis -> waist_yaw_link (0 0 0) -> waist_roll_link (-0.0039635 0 0.044)
+  -> torso_link (0 0 0).
+
+  torso_link -> mid360_link is H-1, the measured Mid360 extrinsic
+  (provenance: Unitree URDF mid360_joint, validated on the old branch).
+  roll = pi: the sensor is mounted upside-down; its FOV sweeps the ground
+  ahead of the robot (H-2). URDF rpy semantics: R = Rz(y)*Ry(p)*Rx(r).
+
+  T7 (test/t7_extrinsic_guard.py) asserts this file and the MJCF site in
+  scene_g1.xml describe the SAME physical pose - as rotation matrices, not
+  as raw numbers, because MJCF euler (intrinsic xyz) and URDF rpy
+  (extrinsic xyz) do not commute at roll = pi.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="g1_mid360">
+
+  <!-- H-1 constants (Appendix A) - the only place they live for ROS -->
+  <xacro:property name="mid360_x"     value="0.0002835"/>
+  <xacro:property name="mid360_y"     value="0.00003"/>
+  <xacro:property name="mid360_z"     value="0.428434"/>
+  <xacro:property name="mid360_roll"  value="3.14159265"/>
+  <xacro:property name="mid360_pitch" value="0.000892"/>
+  <xacro:property name="mid360_yaw"   value="0.0"/>
+
+  <!-- base_link -> torso_link nominal offset (MJCF chain, zero waist joints) -->
+  <xacro:property name="torso_x" value="-0.0039635"/>
+  <xacro:property name="torso_y" value="0.0"/>
+  <xacro:property name="torso_z" value="0.044"/>
+
+  <link name="base_link"/>
+  <link name="torso_link"/>
+  <link name="mid360_link"/>
+
+  <joint name="torso_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="torso_link"/>
+    <origin xyz="${torso_x} ${torso_y} ${torso_z}" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="mid360_joint" type="fixed">
+    <parent link="torso_link"/>
+    <child link="mid360_link"/>
+    <origin xyz="${mid360_x} ${mid360_y} ${mid360_z}"
+            rpy="${mid360_roll} ${mid360_pitch} ${mid360_yaw}"/>
+  </joint>
+
+</robot>

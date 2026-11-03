@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LOOPBACK ONLY - single-machine development and the localhost
+     verification steps of the visualization runbook. Traffic never leaves
+     the machine.
+
+     NEVER use this on Computer 2 during a robot session: with lo pinned,
+     the perception stack cannot see Computer 1's topics and the plot client
+     on Computer 3 cannot see anything. viz_env_computer{2,3}.sh refuse to
+     select it unless G1_VIZ_ALLOW_LOCALHOST=1 is set, for exactly that
+     reason. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" multicast="true"/>
+      </Interfaces>
+      <AllowMulticast>default</AllowMulticast>
+    </General>
+    <Discovery>
+      <!-- The full sim rehearsal (g1_ctrl + simulator + perception container
+           + relays + plot client) easily exceeds Cyclone's default of ~10
+           participants per host; 120 matches the walk harnesses. -->
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
