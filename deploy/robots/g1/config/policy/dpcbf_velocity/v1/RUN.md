@@ -150,8 +150,15 @@ environment on both the onboard computer and operator laptop.
    source ~/.g1_net_env
    source /opt/ros/foxy/setup.bash
    source ros2/install/setup.bash
+
+   echo "$RMW_IMPLEMENTATION"
    ./deploy/robots/g1/build/g1_ctrl --network=<control_nic>
    ```
+
+   `RMW_IMPLEMENTATION` must print `rmw_fastrtps_cpp`. If the repository was
+   cloned somewhere other than `~/unitree_rl_mjlab`, use its actual root path
+   instead (for example, `/home/unitree/sang/unitree_rl_mjlab` on the current
+   G1 onboard computer).
 
    Enter FixStand with `LT + Up`, then DpcbfVelocity with `RT + Y`.
    Numeric keys are hardware-enabled only if
